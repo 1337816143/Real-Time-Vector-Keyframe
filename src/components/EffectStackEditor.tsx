@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, Power } from 'lucide-react';
 import type { EffectBlendMode, EffectNode, EffectSettings } from '../engine/types';
+import './effect-stack.css';
 
 const BLENDS: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 
