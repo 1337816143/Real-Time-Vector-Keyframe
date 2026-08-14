@@ -13,6 +13,7 @@ export type GestureState =
 export type MaskType = 'circle' | 'blob' | 'portal' | 'trail';
 export type TemporalMode = 'none' | 'timeWindow' | 'echo' | 'afterImage';
 export type PlaybackMode = 'once' | 'loop' | 'reverse' | 'pingpong';
+export type TrailReleaseMode = 'hold' | 'dissipate' | 'close' | 'expand' | 'burst' | 'shrink';
 export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 'slash';
 
 export interface Vec2 {
