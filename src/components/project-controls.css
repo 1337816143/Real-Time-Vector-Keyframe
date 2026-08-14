@@ -1,0 +1,29 @@
+.project-controls {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.project-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(205, 232, 244, 0.55);
+}
+
+.project-import {
+  cursor: pointer;
+}
+
+.project-message {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(111, 220, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(88, 197, 238, 0.055);
+  color: rgba(220, 244, 252, 0.76);
+  font-size: 11px;
+  line-height: 1.45;
+}
