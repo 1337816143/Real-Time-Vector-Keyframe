@@ -6,17 +6,22 @@ import {
   Gauge,
   Hand,
   Pause,
+  Play,
   Radio,
+  Repeat2,
+  Rewind,
   RotateCcw,
   Settings2,
   Sparkles,
   Square,
+  Trash2,
   Upload,
   Video,
   X,
 } from 'lucide-react';
 import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
+import { MotionRecorder } from '../engine/motion';
 import { VfxRenderer } from '../engine/renderer';
 import {
   DEFAULT_TRANSFORM,
@@ -24,12 +29,15 @@ import {
   type EffectSettings,
   type EngineDebug,
   type MaskType,
+  type PlaybackMode,
   type PresetId,
   type RenderState,
+  type TemporalMode,
   type TrackingSnapshot,
 } from '../engine/types';
 
-const PRESET_ORDER: PresetId[] = ['multiverse', 'cyber', 'dream', 'freeze', 'slash'];
+const PRESET_ORDER: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
+const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
 
 const initialDebug: EngineDebug = {
   fps: 0,
@@ -40,6 +48,7 @@ const initialDebug: EngineDebug = {
   mask: { ...DEFAULT_TRANSFORM },
   hands: 0,
   renderScale: 1,
+  historyMs: 0,
 };
 
 function supportedMimeType() {
@@ -127,6 +136,13 @@ function drawTrackingDebug(
   ctx.restore();
 }
 
+function temporalLabel(mode: TemporalMode) {
+  if (mode === 'timeWindow') return 'Time Window';
+  if (mode === 'afterImage') return 'After Image';
+  if (mode === 'echo') return 'Echo';
+  return 'None';
+}
+
 export default function Studio({ onExit }: { onExit: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -138,6 +154,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const trackerRef = useRef<HandTracker>();
   const rendererRef = useRef<VfxRenderer>();
   const gestureRef = useRef(new GestureController(DEFAULT_TRANSFORM));
+  const motionRef = useRef(new MotionRecorder());
   const snapshotRef = useRef<TrackingSnapshot>();
   const animationRef = useRef<number>();
   const mediaRecorderRef = useRef<MediaRecorder>();
@@ -170,6 +187,12 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [trackingReady, setTrackingReady] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [altMediaName, setAltMediaName] = useState('No alternate media');
+  const [motionRecording, setMotionRecording] = useState(false);
+  const [motionPlaying, setMotionPlaying] = useState(false);
+  const [motionMode, setMotionMode] = useState<PlaybackMode>('loop');
+  const [motionFrames, setMotionFrames] = useState(0);
+  const [motionDuration, setMotionDuration] = useState(0);
+  const [motionProgress, setMotionProgress] = useState(0);
 
   const applyPreset = useCallback((id: PresetId) => {
     const next = PRESETS[id];
@@ -229,31 +252,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     }
   }, []);
 
-  useEffect(() => {
-    debugVisibleRef.current = debugVisible;
-  }, [debugVisible]);
-
-  useEffect(() => {
-    tutorialStepRef.current = tutorialStep;
-  }, [tutorialStep]);
-
+  useEffect(() => { debugVisibleRef.current = debugVisible; }, [debugVisible]);
+  useEffect(() => { tutorialStepRef.current = tutorialStep; }, [tutorialStep]);
   useEffect(() => {
     mirrorRef.current = mirror;
     trackerRef.current?.setMirrored(mirror);
     rendererRef.current?.setMirror(mirror);
   }, [mirror]);
-
-  useEffect(() => {
-    maskTypeRef.current = maskType;
-  }, [maskType]);
-
-  useEffect(() => {
-    effectsRef.current = effects;
-  }, [effects]);
-
-  useEffect(() => {
-    presetRef.current = preset;
-  }, [preset]);
+  useEffect(() => { maskTypeRef.current = maskType; }, [maskType]);
+  useEffect(() => { effectsRef.current = effects; }, [effects]);
+  useEffect(() => { presetRef.current = preset; }, [preset]);
 
   useEffect(() => {
     setMirror(facingMode === 'user');
@@ -270,6 +278,15 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     let fps = 60;
     let lastDebugUi = 0;
     let lowFpsSeconds = 0;
+    let lastLiveState: RenderState = {
+      maskType: maskTypeRef.current,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...effectsRef.current },
+      gestureState: 'IDLE',
+      handSpeed: 0,
+      trail: trailRef.current,
+      time: performance.now(),
+    };
 
     try {
       rendererRef.current = new VfxRenderer(canvas);
@@ -301,6 +318,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       const rect = canvas.getBoundingClientRect();
       tracker.setDisplayGeometry(video.videoWidth || 1, video.videoHeight || 1, rect.width, rect.height);
       const snapshot = tracker.detect(video, now, 26);
+
       if (snapshot) {
         snapshotRef.current = snapshot;
         const gesture = gestureRef.current.update(snapshot, maskTypeRef.current === 'trail', rect.width / Math.max(1, rect.height));
@@ -315,7 +333,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         if (tutorialStepRef.current <= 2 && gesture.state === 'DRAGGING') advanceTutorial(3);
         if (tutorialStepRef.current <= 3 && gesture.released) advanceTutorial(4);
 
-        if (gesture.swipe) cyclePreset(gesture.swipe);
+        if (!motionRef.current.isPlaying() && gesture.swipe) cyclePreset(gesture.swipe);
         if (gesture.pinchStarted && presetRef.current === 'freeze') captureFreeze();
         if (gesture.pinchStarted && maskTypeRef.current === 'trail') trailRef.current = [];
         if (gesture.trailPoint && maskTypeRef.current === 'trail') {
@@ -327,20 +345,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           }
         }
         if (gesture.released && maskTypeRef.current === 'trail') lastTrailReleaseRef.current = now;
+        if (presetRef.current === 'freeze') altSourceRef.current = frozenRef.current ? freezeCanvasRef.current : video;
 
-        const currentPreset = presetRef.current;
-        const currentEffects = effectsRef.current;
-        if (currentPreset === 'freeze') {
-          altSourceRef.current = frozenRef.current ? freezeCanvasRef.current : video;
-        }
-
-        const renderState: RenderState = {
+        const baseEffects = effectsRef.current;
+        lastLiveState = {
           maskType: maskTypeRef.current,
-          transform: gesture.transform,
+          transform: { ...gesture.transform },
           effects: {
-            ...currentEffects,
-            rgbSplit: currentEffects.rgbSplit * (1 + Math.min(2.2, gesture.handSpeed * 0.8)),
-            distortion: currentEffects.distortion * (1 + Math.min(2.5, gesture.handSpeed)),
+            ...baseEffects,
+            rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, gesture.handSpeed * 0.8)),
+            distortion: baseEffects.distortion * (1 + Math.min(2.5, gesture.handSpeed)),
           },
           gestureState: gesture.state,
           handSpeed: gesture.handSpeed,
@@ -348,35 +362,45 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           hoverPoint: gesture.hoverPoint,
           time: now,
         };
-        (frame as unknown as { state?: RenderState }).state = renderState;
+      } else {
+        const baseEffects = effectsRef.current;
+        lastLiveState = {
+          ...lastLiveState,
+          maskType: maskTypeRef.current,
+          effects: {
+            ...baseEffects,
+            rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, lastLiveState.handSpeed * 0.8)),
+            distortion: baseEffects.distortion * (1 + Math.min(2.5, lastLiveState.handSpeed)),
+          },
+          trail: trailRef.current,
+          time: now,
+        };
       }
 
       if (maskTypeRef.current === 'trail' && lastTrailReleaseRef.current && now - lastTrailReleaseRef.current > 1200 && trailRef.current.length > 1) {
         trailRef.current.shift();
       }
 
-      const lastState = (frame as unknown as { state?: RenderState }).state ?? {
-        maskType: maskTypeRef.current,
-        transform: { ...DEFAULT_TRANSFORM },
-        effects: effectsRef.current,
-        gestureState: 'IDLE',
-        handSpeed: 0,
-        trail: trailRef.current,
-        time: now,
-      } as RenderState;
-      lastState.time = now;
-      lastState.maskType = maskTypeRef.current;
-      const baseEffects = effectsRef.current;
-      lastState.effects = {
-        ...baseEffects,
-        rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, lastState.handSpeed * 0.8)),
-        distortion: baseEffects.distortion * (1 + Math.min(2.5, lastState.handSpeed)),
-      };
-      lastState.trail = trailRef.current;
+      motionRef.current.capture(lastLiveState, now);
+      let renderState = lastLiveState;
+      const playbackFrame = motionRef.current.sample(now);
+      if (playbackFrame) {
+        renderState = {
+          ...lastLiveState,
+          maskType: playbackFrame.maskType,
+          transform: { ...playbackFrame.transform },
+          effects: { ...playbackFrame.effects },
+          gestureState: playbackFrame.gestureState,
+          handSpeed: playbackFrame.handSpeed,
+          hoverPoint: undefined,
+          time: now,
+        };
+        if (!motionRef.current.isPlaying()) gestureRef.current.setTransform(playbackFrame.transform);
+      }
 
       let alternate: TexImageSource | undefined = altSourceRef.current;
       if (presetRef.current === 'freeze') alternate = frozenRef.current ? freezeCanvasRef.current : video;
-      renderer?.render(video, alternate, lastState);
+      renderer?.render(video, alternate, renderState);
 
       if (debugVisibleRef.current && debugCanvasRef.current) drawTrackingDebug(debugCanvasRef.current, snapshotRef.current, video, mirrorRef.current);
       else if (debugCanvasRef.current) debugCanvasRef.current.getContext('2d')?.clearRect(0, 0, debugCanvasRef.current.width, debugCanvasRef.current.height);
@@ -397,18 +421,24 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       }
 
       if (now - lastDebugUi > 180) {
-        const state = (frame as unknown as { state?: RenderState }).state ?? lastState;
         const hand = snapshotRef.current?.hands[0];
         setDebug({
           fps,
           trackingFps: snapshotRef.current?.trackingFps ?? 0,
-          state: state.gestureState,
+          state: renderState.gestureState,
           pinchDistance: hand?.normalizedPinchDistance ?? 0,
-          handSpeed: hand?.speed ?? 0,
-          mask: state.transform,
+          handSpeed: renderState.handSpeed,
+          mask: renderState.transform,
           hands: snapshotRef.current?.hands.length ?? 0,
           renderScale: renderer?.getRenderScale() ?? 1,
+          historyMs: renderer?.getHistoryDepthMs(now) ?? 0,
         });
+        const track = motionRef.current.getTrack();
+        setMotionRecording(motionRef.current.isRecording());
+        setMotionPlaying(motionRef.current.isPlaying());
+        setMotionFrames(track?.keyframes.length ?? 0);
+        setMotionDuration(track?.duration ?? 0);
+        setMotionProgress(motionRef.current.getProgress(now));
         lastDebugUi = now;
       }
 
@@ -482,6 +512,40 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     if (mediaRecorderRef.current?.state !== 'inactive') mediaRecorderRef.current?.stop();
   };
 
+  const startMotionRecording = () => {
+    motionRef.current.start();
+    setMotionRecording(true);
+    setMotionPlaying(false);
+  };
+
+  const stopMotionRecording = () => {
+    const track = motionRef.current.stop();
+    setMotionRecording(false);
+    setMotionFrames(track?.keyframes.length ?? 0);
+    setMotionDuration(track?.duration ?? 0);
+  };
+
+  const playMotion = (mode: PlaybackMode) => {
+    setMotionMode(mode);
+    if (motionRef.current.play(mode)) setMotionPlaying(true);
+  };
+
+  const stopMotionPlayback = () => {
+    const frame = motionRef.current.sample();
+    motionRef.current.stopPlayback();
+    if (frame) gestureRef.current.setTransform(frame.transform);
+    setMotionPlaying(false);
+  };
+
+  const clearMotion = () => {
+    motionRef.current.clear();
+    setMotionRecording(false);
+    setMotionPlaying(false);
+    setMotionFrames(0);
+    setMotionDuration(0);
+    setMotionProgress(0);
+  };
+
   const resetMask = () => {
     gestureRef.current.setTransform(DEFAULT_TRANSFORM);
     trailRef.current = [];
@@ -533,7 +597,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
       <aside className={`studio-panel glass-panel ${panelOpen ? 'open' : ''}`}>
         <div className="panel-heading">
-          <div><span className="eyebrow">LIVE CONTROL</span><h2>{panel === 'mask' ? 'Mask' : panel === 'effects' ? 'Effects' : panel === 'gesture' ? 'Gesture' : panel === 'record' ? 'Record' : 'Settings'}</h2></div>
+          <div><span className="eyebrow">LIVE CONTROL</span><h2>{panel === 'mask' ? 'Mask' : panel === 'effects' ? 'Effects' : panel === 'gesture' ? 'Gesture + Motion' : panel === 'record' ? 'Record' : 'Settings'}</h2></div>
           <button className="icon-button subtle" onClick={() => setPanelOpen(false)}><X size={18} /></button>
         </div>
 
@@ -551,7 +615,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             <Range label="Ripple" value={effects.ripple} min={0} max={0.06} step={0.002} onChange={(value) => setEffects((e) => ({ ...e, ripple: value }))} />
             <Range label="Pixelate" value={effects.pixelate} min={0} max={120} step={4} onChange={(value) => setEffects((e) => ({ ...e, pixelate: value }))} />
             <Range label="Edge glow" value={effects.glow} min={0} max={1.8} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, glow: value }))} />
+            <span className="eyebrow">TEMPORAL FX</span>
+            <div className="segmented-grid">
+              {TEMPORAL_MODES.map((mode) => <button key={mode} className={effects.temporalMode === mode ? 'selected' : ''} onClick={() => setEffects((e) => ({ ...e, temporalMode: mode }))}>{temporalLabel(mode)}</button>)}
+            </div>
+            {effects.temporalMode !== 'none' && <Range label="History delay (ms)" value={effects.temporalDelayMs} min={150} max={2000} step={50} onChange={(value) => setEffects((e) => ({ ...e, temporalDelayMs: value }))} />}
+            {(effects.temporalMode === 'echo' || effects.temporalMode === 'afterImage') && <Range label="Temporal mix" value={effects.temporalMix} min={0.05} max={1} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, temporalMix: value }))} />}
             <Toggle label="Invert mask" checked={effects.invertMask} onChange={(value) => setEffects((e) => ({ ...e, invertMask: value }))} />
+            <p className="panel-note">Time Window samples the real camera history buffer. Echo and After Image blend historical frames in the WebGL shader rather than reusing a frozen screenshot.</p>
           </>
         )}
 
@@ -564,32 +635,56 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         )}
 
         {panel === 'gesture' && (
-          <div className="telemetry-list"><Metric label="State" value={debug.state} /><Metric label="Hands" value={String(debug.hands)} /><Metric label="Pinch ratio" value={debug.pinchDistance.toFixed(2)} /><Metric label="Hand speed" value={debug.handSpeed.toFixed(2)} /><p className="panel-note">Pinch ON &lt; 0.38 palm widths · OFF &gt; 0.52. Tracking is intentionally slower than rendering; interpolation keeps the VFX motion smooth.</p></div>
+          <div className="telemetry-list">
+            <Metric label="State" value={debug.state} />
+            <Metric label="Hands" value={String(debug.hands)} />
+            <Metric label="Pinch ratio" value={debug.pinchDistance.toFixed(2)} />
+            <Metric label="Hand speed" value={debug.handSpeed.toFixed(2)} />
+            <Metric label="History buffer" value={`${Math.round(debug.historyMs)} ms`} />
+            <span className="eyebrow">MOTION KEYFRAMES</span>
+            {!motionRecording ? <button className="secondary-button" onClick={startMotionRecording}><Radio size={16} /> Record motion</button> : <button className="record-button recording" onClick={stopMotionRecording}><Square size={16} fill="currentColor" /> Stop motion capture</button>}
+            <Metric label="Keyframes" value={String(motionFrames)} />
+            <Metric label="Duration" value={`${(motionDuration / 1000).toFixed(2)} s`} />
+            <Metric label="Playback" value={motionPlaying ? `${motionMode} · ${Math.round(motionProgress * 100)}%` : 'stopped'} />
+            {motionFrames > 1 && (
+              <>
+                <div className="segmented-grid">
+                  <button className={motionPlaying && motionMode === 'once' ? 'selected' : ''} onClick={() => playMotion('once')}><Play size={13} /> Once</button>
+                  <button className={motionPlaying && motionMode === 'loop' ? 'selected' : ''} onClick={() => playMotion('loop')}><Repeat2 size={13} /> Loop</button>
+                  <button className={motionPlaying && motionMode === 'reverse' ? 'selected' : ''} onClick={() => playMotion('reverse')}><Rewind size={13} /> Reverse</button>
+                  <button className={motionPlaying && motionMode === 'pingpong' ? 'selected' : ''} onClick={() => playMotion('pingpong')}><RotateCcw size={13} /> Ping Pong</button>
+                </div>
+                {motionPlaying && <button className="secondary-button" onClick={stopMotionPlayback}><Pause size={16} /> Stop playback</button>}
+                <button className="secondary-button" onClick={clearMotion}><Trash2 size={16} /> Clear motion</button>
+              </>
+            )}
+            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect and gesture-state changes. Playback interpolates position, scale, rotation and effect parameters instead of replaying raw frame-by-frame coordinates.</p>
+          </div>
         )}
 
         {panel === 'record' && (
           <div className="record-panel">
-            {!recording ? <button className="record-button" onClick={startRecording}><Radio size={18} /> Start recording</button> : <button className="record-button recording" onClick={stopRecording}><Square size={17} fill="currentColor" /> Stop recording</button>}
+            {!recording ? <button className="record-button" onClick={startRecording}><Radio size={18} /> Start video recording</button> : <button className="record-button recording" onClick={stopRecording}><Square size={17} fill="currentColor" /> Stop recording</button>}
             {recordingUrl && <div className="record-preview"><video src={recordingUrl} controls playsInline /><a className="secondary-button" href={recordingUrl} download={`vector-keyframe-${Date.now()}.webm`}>Save WebM</a></div>}
-            <p className="panel-note">Recording captures only the final WebGL canvas: camera + mask + effects. Studio UI and debug overlays are excluded.</p>
+            <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + mask + VFX. Studio UI and debug overlays are excluded.</p>
           </div>
         )}
 
         {panel === 'settings' && (
-          <div className="telemetry-list"><Toggle label="Mirror front camera" checked={mirror} onChange={setMirror} /><Metric label="Render scale" value={`${Math.round(debug.renderScale * 100)}%`} /><Metric label="Render FPS" value={String(debug.fps)} /><Metric label="Tracking FPS" value={String(debug.trackingFps)} /><Toggle label="Tracking debug" checked={debugVisible} onChange={setDebugVisible} /></div>
+          <div className="telemetry-list"><Toggle label="Mirror front camera" checked={mirror} onChange={setMirror} /><Metric label="Render scale" value={`${Math.round(debug.renderScale * 100)}%`} /><Metric label="Render FPS" value={String(debug.fps)} /><Metric label="Tracking FPS" value={String(debug.trackingFps)} /><Metric label="Temporal history" value={`${Math.round(debug.historyMs)} ms`} /><Toggle label="Tracking debug" checked={debugVisible} onChange={setDebugVisible} /></div>
         )}
       </aside>
 
       {!panelOpen && <button className="panel-reopen glass-panel" onClick={() => setPanelOpen(true)}><Settings2 size={18} /><span>Controls</span></button>}
 
       {debugVisible && (
-        <div className="debug-hud glass-panel"><div><span>RENDER</span><b>{debug.fps} FPS</b></div><div><span>TRACK</span><b>{debug.trackingFps} FPS</b></div><div><span>STATE</span><b>{debug.state}</b></div><div><span>PINCH</span><b>{debug.pinchDistance.toFixed(2)}</b></div><div><span>VELOCITY</span><b>{debug.handSpeed.toFixed(2)}</b></div><div><span>MASK</span><b>{debug.mask.x.toFixed(2)}, {debug.mask.y.toFixed(2)}</b></div></div>
+        <div className="debug-hud glass-panel"><div><span>RENDER</span><b>{debug.fps} FPS</b></div><div><span>TRACK</span><b>{debug.trackingFps} FPS</b></div><div><span>STATE</span><b>{debug.state}</b></div><div><span>PINCH</span><b>{debug.pinchDistance.toFixed(2)}</b></div><div><span>VELOCITY</span><b>{debug.handSpeed.toFixed(2)}</b></div><div><span>HISTORY</span><b>{Math.round(debug.historyMs)}ms</b></div><div><span>MASK</span><b>{debug.mask.x.toFixed(2)}, {debug.mask.y.toFixed(2)}</b></div></div>
       )}
 
       <nav className="studio-dock glass-panel" aria-label="Studio controls">
         <DockButton active={panel === 'mask' && panelOpen} icon={<CircleDot size={19} />} label="Mask" onClick={() => { setPanel('mask'); setPanelOpen(true); }} />
         <DockButton active={panel === 'effects' && panelOpen} icon={<Sparkles size={19} />} label="Effects" onClick={() => { setPanel('effects'); setPanelOpen(true); }} />
-        <DockButton active={panel === 'gesture' && panelOpen} icon={<Hand size={19} />} label="Gesture" onClick={() => { setPanel('gesture'); setPanelOpen(true); }} />
+        <DockButton active={panel === 'gesture' && panelOpen} icon={<Hand size={19} />} label="Motion" onClick={() => { setPanel('gesture'); setPanelOpen(true); }} />
         <button className={`dock-record ${recording ? 'active' : ''}`} onClick={recording ? stopRecording : startRecording} aria-label={recording ? 'Stop recording' : 'Start recording'}>{recording ? <Square size={17} fill="currentColor" /> : <span />}</button>
         <DockButton active={panel === 'record' && panelOpen} icon={recording ? <Pause size={19} /> : <Video size={19} />} label="Record" onClick={() => { setPanel('record'); setPanelOpen(true); }} />
         <DockButton active={panel === 'settings' && panelOpen} icon={<Settings2 size={19} />} label="Settings" onClick={() => { setPanel('settings'); setPanelOpen(true); }} />
@@ -603,7 +698,7 @@ function DockButton({ active, icon, label, onClick }: { active: boolean; icon: R
 }
 
 function Range({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
-  return <label className="range-row"><span><b>{label}</b><code>{value.toFixed(step < 1 ? 3 : 0)}</code></span><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+  return <label className="range-row"><span><b>{label}</b><code>{step >= 1 ? value.toFixed(0) : value.toFixed(3)}</code></span><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>;
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
