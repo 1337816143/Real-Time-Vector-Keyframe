@@ -1,4 +1,4 @@
-import type { RenderState } from './types';
+import type { RenderState, TemporalMode } from './types';
 
 const VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -21,6 +21,8 @@ out vec4 outColor;
 
 uniform sampler2D uCamera;
 uniform sampler2D uAlternate;
+uniform sampler2D uHistoryA;
+uniform sampler2D uHistoryB;
 uniform vec2 uViewport;
 uniform vec2 uCameraSize;
 uniform vec2 uAltSize;
@@ -38,6 +40,8 @@ uniform float uDistortion;
 uniform float uGlow;
 uniform float uInvertMask;
 uniform float uUseAlternate;
+uniform int uTemporalMode;
+uniform float uTemporalMix;
 uniform vec2 uHover;
 uniform float uHoverVisible;
 uniform int uGestureState;
@@ -56,6 +60,45 @@ vec2 coverUv(vec2 uv, vec2 sourceSize) {
     outUv.y = (uv.y - 0.5) * scale + 0.5;
   }
   return outUv;
+}
+
+vec2 cameraUv(vec2 uv) {
+  vec2 outUv = coverUv(uv, uCameraSize);
+  if (uMirror > 0.5) outUv.x = 1.0 - outUv.x;
+  return outUv;
+}
+
+vec3 currentCamera(vec2 uv) {
+  return texture(uCamera, cameraUv(uv)).rgb;
+}
+
+vec3 historyA(vec2 uv) {
+  return texture(uHistoryA, cameraUv(uv)).rgb;
+}
+
+vec3 historyB(vec2 uv) {
+  return texture(uHistoryB, cameraUv(uv)).rgb;
+}
+
+vec3 alternateSource(vec2 uv) {
+  return texture(uAlternate, coverUv(uv, uAltSize)).rgb;
+}
+
+vec3 sourceAt(vec2 uv) {
+  if (uTemporalMode == 1) {
+    return historyA(uv);
+  }
+  if (uTemporalMode == 2) {
+    vec3 live = currentCamera(uv);
+    vec3 echoA = historyA(uv);
+    vec3 echoB = historyB(uv);
+    vec3 layered = mix(live, echoA, clamp(uTemporalMix * 0.72, 0.0, 0.85));
+    return mix(layered, echoB, clamp(uTemporalMix * 0.28, 0.0, 0.42));
+  }
+  if (uTemporalMode == 3) {
+    return mix(currentCamera(uv), historyA(uv), clamp(uTemporalMix, 0.0, 0.82));
+  }
+  return uUseAlternate > 0.5 ? alternateSource(uv) : currentCamera(uv);
 }
 
 vec2 rotate2(vec2 p, float a) {
@@ -77,9 +120,7 @@ float maskSdf(vec2 uv) {
   p = rotate2(p, -uMaskRotation);
   float r = max(0.03, uMaskScale);
 
-  if (uMaskType == 0) {
-    return length(p) - r;
-  }
+  if (uMaskType == 0) return length(p) - r;
 
   if (uMaskType == 1) {
     float a = atan(p.y, p.x);
@@ -100,9 +141,9 @@ float maskSdf(vec2 uv) {
 
   float best = 10.0;
   if (uTrailCount == 1) {
-    vec2 a = uTrail[0].xy - vec2(0.5);
+    vec2 a = uTrail[0].xy;
     a.x *= aspect;
-    vec2 q = uv - vec2(0.5);
+    vec2 q = uv;
     q.x *= aspect;
     best = length(q - a) - uTrail[0].z;
   }
@@ -134,26 +175,16 @@ vec3 sampleEffect(vec2 uv) {
     eUv = (floor(eUv * grid) + 0.5) / grid;
   }
 
-  vec2 altUv = coverUv(eUv, uAltSize);
-  vec2 camUv = coverUv(eUv, uCameraSize);
-  if (uMirror > 0.5) camUv.x = 1.0 - camUv.x;
-
   vec2 split = vec2(uRgbSplit * (0.45 + min(uHandSpeed, 2.0)), 0.0);
-  vec3 sourceCenter = uUseAlternate > 0.5 ? texture(uAlternate, altUv).rgb : texture(uCamera, camUv).rgb;
-  if (uRgbSplit <= 0.0001) return sourceCenter;
-
-  vec2 plusUv = uUseAlternate > 0.5 ? coverUv(eUv + split, uAltSize) : coverUv(eUv + split, uCameraSize);
-  vec2 minusUv = uUseAlternate > 0.5 ? coverUv(eUv - split, uAltSize) : coverUv(eUv - split, uCameraSize);
-  if (uUseAlternate < 0.5 && uMirror > 0.5) { plusUv.x = 1.0 - plusUv.x; minusUv.x = 1.0 - minusUv.x; }
-  vec3 plusC = uUseAlternate > 0.5 ? texture(uAlternate, plusUv).rgb : texture(uCamera, plusUv).rgb;
-  vec3 minusC = uUseAlternate > 0.5 ? texture(uAlternate, minusUv).rgb : texture(uCamera, minusUv).rgb;
-  return vec3(plusC.r, sourceCenter.g, minusC.b);
+  vec3 center = sourceAt(eUv);
+  if (uRgbSplit <= 0.0001) return center;
+  vec3 plusC = sourceAt(eUv + split);
+  vec3 minusC = sourceAt(eUv - split);
+  return vec3(plusC.r, center.g, minusC.b);
 }
 
 void main() {
-  vec2 camUv = coverUv(vUv, uCameraSize);
-  if (uMirror > 0.5) camUv.x = 1.0 - camUv.x;
-  vec3 base = texture(uCamera, camUv).rgb;
+  vec3 base = currentCamera(vUv);
   vec3 effect = sampleEffect(vUv);
 
   float sd = maskSdf(vUv);
@@ -207,16 +238,34 @@ function createTexture(gl: WebGL2RenderingContext) {
   return texture;
 }
 
+type HistorySlot = {
+  texture: WebGLTexture;
+  timestamp: number;
+  initialized: boolean;
+};
+
+const TEMPORAL_MODE: Record<TemporalMode, number> = {
+  none: 0,
+  timeWindow: 1,
+  echo: 2,
+  afterImage: 3,
+};
+
 export class VfxRenderer {
   private gl: WebGL2RenderingContext;
   private program: WebGLProgram;
   private cameraTexture: WebGLTexture;
   private alternateTexture: WebGLTexture;
+  private history: HistorySlot[];
+  private historyCursor = 0;
+  private lastHistoryCapture = -Infinity;
+  private readonly historyIntervalMs = 150;
   private vao: WebGLVertexArrayObject;
   private cameraSize: [number, number] = [1280, 720];
   private altSize: [number, number] = [1280, 720];
   private renderScale = 1;
   private mirror = true;
+  private uniforms = new Map<string, WebGLUniformLocation | null>();
 
   constructor(private canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: false });
@@ -231,9 +280,15 @@ export class VfxRenderer {
     this.program = program;
     this.cameraTexture = createTexture(gl);
     this.alternateTexture = createTexture(gl);
+    this.history = Array.from({ length: 15 }, () => ({ texture: createTexture(gl), timestamp: 0, initialized: false }));
     const vao = gl.createVertexArray();
     if (!vao) throw new Error('Unable to create VAO');
     this.vao = vao;
+  }
+
+  private uniform(name: string) {
+    if (!this.uniforms.has(name)) this.uniforms.set(name, this.gl.getUniformLocation(this.program, name));
+    return this.uniforms.get(name) ?? null;
   }
 
   setMirror(value: boolean) {
@@ -246,6 +301,12 @@ export class VfxRenderer {
 
   getRenderScale() {
     return this.renderScale;
+  }
+
+  getHistoryDepthMs(now = performance.now()) {
+    const initialized = this.history.filter((slot) => slot.initialized);
+    if (!initialized.length) return 0;
+    return Math.max(0, now - Math.min(...initialized.map((slot) => slot.timestamp)));
   }
 
   resize() {
@@ -264,7 +325,7 @@ export class VfxRenderer {
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
     } catch {
-      return;
+      return false;
     }
     if (source instanceof HTMLVideoElement) {
       size[0] = source.videoWidth || size[0];
@@ -276,6 +337,33 @@ export class VfxRenderer {
       size[0] = source.width || size[0];
       size[1] = source.height || size[1];
     }
+    return true;
+  }
+
+  private captureHistory(camera: HTMLVideoElement, now: number) {
+    if (now - this.lastHistoryCapture < this.historyIntervalMs) return;
+    const slot = this.history[this.historyCursor];
+    if (this.upload(slot.texture, camera, this.cameraSize)) {
+      slot.timestamp = now;
+      slot.initialized = true;
+      this.historyCursor = (this.historyCursor + 1) % this.history.length;
+      this.lastHistoryCapture = now;
+    }
+  }
+
+  private historyTexture(now: number, delayMs: number) {
+    const target = now - Math.max(0, delayMs);
+    let best: HistorySlot | undefined;
+    let distance = Infinity;
+    for (const slot of this.history) {
+      if (!slot.initialized) continue;
+      const next = Math.abs(slot.timestamp - target);
+      if (next < distance) {
+        distance = next;
+        best = slot;
+      }
+    }
+    return best?.texture ?? this.cameraTexture;
   }
 
   render(camera: HTMLVideoElement, alternate: TexImageSource | undefined, state: RenderState) {
@@ -284,6 +372,10 @@ export class VfxRenderer {
     const gl = this.gl;
     this.upload(this.cameraTexture, camera, this.cameraSize);
     this.upload(this.alternateTexture, alternate ?? camera, this.altSize);
+    this.captureHistory(camera, state.time);
+
+    const historyA = this.historyTexture(state.time, state.effects.temporalDelayMs);
+    const historyB = this.historyTexture(state.time, Math.min(2100, state.effects.temporalDelayMs * 1.65 + 180));
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
@@ -292,31 +384,38 @@ export class VfxRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.cameraTexture);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.alternateTexture);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, historyA);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, historyB);
 
-    const uniform = (name: string) => gl.getUniformLocation(this.program, name);
-    gl.uniform1i(uniform('uCamera'), 0);
-    gl.uniform1i(uniform('uAlternate'), 1);
-    gl.uniform2f(uniform('uViewport'), this.canvas.width, this.canvas.height);
-    gl.uniform2f(uniform('uCameraSize'), this.cameraSize[0], this.cameraSize[1]);
-    gl.uniform2f(uniform('uAltSize'), this.altSize[0], this.altSize[1]);
-    gl.uniform1f(uniform('uTime'), state.time / 1000);
-    gl.uniform1f(uniform('uMirror'), this.mirror ? 1 : 0);
-    gl.uniform2f(uniform('uMaskCenter'), state.transform.x, 1 - state.transform.y);
-    gl.uniform1f(uniform('uMaskScale'), state.transform.scale);
-    gl.uniform1f(uniform('uMaskRotation'), -state.transform.rotation);
-    gl.uniform1i(uniform('uMaskType'), state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : 3);
-    gl.uniform1f(uniform('uHandSpeed'), state.handSpeed);
-    gl.uniform1f(uniform('uRgbSplit'), state.effects.rgbSplit);
-    gl.uniform1f(uniform('uRipple'), state.effects.ripple);
-    gl.uniform1f(uniform('uPixelate'), state.effects.pixelate);
-    gl.uniform1f(uniform('uDistortion'), state.effects.distortion);
-    gl.uniform1f(uniform('uGlow'), state.effects.glow);
-    gl.uniform1f(uniform('uInvertMask'), state.effects.invertMask ? 1 : 0);
-    gl.uniform1f(uniform('uUseAlternate'), state.effects.useAlternateMedia ? 1 : 0);
+    gl.uniform1i(this.uniform('uCamera'), 0);
+    gl.uniform1i(this.uniform('uAlternate'), 1);
+    gl.uniform1i(this.uniform('uHistoryA'), 2);
+    gl.uniform1i(this.uniform('uHistoryB'), 3);
+    gl.uniform2f(this.uniform('uViewport'), this.canvas.width, this.canvas.height);
+    gl.uniform2f(this.uniform('uCameraSize'), this.cameraSize[0], this.cameraSize[1]);
+    gl.uniform2f(this.uniform('uAltSize'), this.altSize[0], this.altSize[1]);
+    gl.uniform1f(this.uniform('uTime'), state.time / 1000);
+    gl.uniform1f(this.uniform('uMirror'), this.mirror ? 1 : 0);
+    gl.uniform2f(this.uniform('uMaskCenter'), state.transform.x, 1 - state.transform.y);
+    gl.uniform1f(this.uniform('uMaskScale'), state.transform.scale);
+    gl.uniform1f(this.uniform('uMaskRotation'), -state.transform.rotation);
+    gl.uniform1i(this.uniform('uMaskType'), state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : 3);
+    gl.uniform1f(this.uniform('uHandSpeed'), state.handSpeed);
+    gl.uniform1f(this.uniform('uRgbSplit'), state.effects.rgbSplit);
+    gl.uniform1f(this.uniform('uRipple'), state.effects.ripple);
+    gl.uniform1f(this.uniform('uPixelate'), state.effects.pixelate);
+    gl.uniform1f(this.uniform('uDistortion'), state.effects.distortion);
+    gl.uniform1f(this.uniform('uGlow'), state.effects.glow);
+    gl.uniform1f(this.uniform('uInvertMask'), state.effects.invertMask ? 1 : 0);
+    gl.uniform1f(this.uniform('uUseAlternate'), state.effects.useAlternateMedia ? 1 : 0);
+    gl.uniform1i(this.uniform('uTemporalMode'), TEMPORAL_MODE[state.effects.temporalMode]);
+    gl.uniform1f(this.uniform('uTemporalMix'), state.effects.temporalMix);
     const hover = state.hoverPoint;
-    gl.uniform2f(uniform('uHover'), hover?.x ?? -2, hover ? 1 - hover.y : -2);
-    gl.uniform1f(uniform('uHoverVisible'), hover ? 1 : 0);
-    gl.uniform1i(uniform('uGestureState'), ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'].indexOf(state.gestureState));
+    gl.uniform2f(this.uniform('uHover'), hover?.x ?? -2, hover ? 1 - hover.y : -2);
+    gl.uniform1f(this.uniform('uHoverVisible'), hover ? 1 : 0);
+    gl.uniform1i(this.uniform('uGestureState'), ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'].indexOf(state.gestureState));
 
     const trail = state.trail.slice(-32);
     const flat = new Float32Array(32 * 3);
@@ -325,8 +424,8 @@ export class VfxRenderer {
       flat[index * 3 + 1] = 1 - point.y;
       flat[index * 3 + 2] = point.width;
     });
-    gl.uniform1i(uniform('uTrailCount'), trail.length);
-    gl.uniform3fv(uniform('uTrail[0]'), flat);
+    gl.uniform1i(this.uniform('uTrailCount'), trail.length);
+    gl.uniform3fv(this.uniform('uTrail[0]'), flat);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -335,6 +434,7 @@ export class VfxRenderer {
     const gl = this.gl;
     gl.deleteTexture(this.cameraTexture);
     gl.deleteTexture(this.alternateTexture);
+    this.history.forEach((slot) => gl.deleteTexture(slot.texture));
     gl.deleteProgram(this.program);
     gl.deleteVertexArray(this.vao);
   }
