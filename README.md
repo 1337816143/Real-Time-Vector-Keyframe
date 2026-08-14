@@ -6,7 +6,7 @@ The product goal is not a web clone of a traditional video editor. The interacti
 
 **camera → hand tracking → gesture state machine → vector mask → GPU effect composite → temporal/motion system → recording**
 
-## Current baseline — v0.2 Temporal + Motion
+## Current baseline — v0.3 Vector Motion (in progress)
 
 ### Realtime interaction foundation
 
@@ -22,7 +22,6 @@ The product goal is not a web clone of a traditional video editor. The interacti
 - Swipe left/right to cycle effect presets.
 - Real WebGL2 mask composition; the VFX layer is not a DOM element and does not use CSS `clip-path` for the core effect.
 - Procedural Circle, Blob and Portal masks.
-- Vector Trail / Vector Slash mode generated from hand movement.
 - Velocity-reactive deformation, RGB split, ripple, distortion and edge glow.
 - Alternate image/video upload for the world behind the mask.
 - Freeze World using a captured camera frame.
@@ -34,7 +33,7 @@ The product goal is not a web clone of a traditional video editor. The interacti
 
 ### True temporal VFX
 
-The renderer now owns a real camera-history ring buffer rather than simulating delay with one frozen frame.
+The renderer owns a real camera-history ring buffer rather than simulating delay with one frozen frame.
 
 - 15 historical camera textures.
 - New history frame captured about every 150 ms.
@@ -45,7 +44,7 @@ The renderer now owns a real camera-history ring buffer rather than simulating d
 - **After Image**: current and delayed camera frames are blended in GLSL.
 - Temporal delay adjustable from 150–2000 ms in Studio.
 - Temporal mix adjustable for Echo / After Image.
-- Temporal history depth is exposed in the debug HUD.
+- Temporal history depth exposed in the debug HUD.
 
 ### Motion Recording / automatic keyframes
 
@@ -57,12 +56,32 @@ Motion capture is separate from video capture.
 - Record gesture state and hand velocity.
 - Record the hand interaction point used by the realtime interaction layer.
 - Automatically create sparse keyframes based on meaningful motion/effect changes rather than blindly storing every render frame.
-- Periodic safety keyframes prevent long static sections from losing timing information.
+- Periodic safety keyframes preserve timing through static sections.
 - Interpolate position and scale during replay.
 - Shortest-path interpolation for rotation.
 - Interpolate numeric Effect parameters during replay.
 - Replay modes: **Once**, **Loop**, **Reverse**, **Ping Pong**.
 - Playback duration, keyframe count and progress exposed in Studio.
+
+### Vector Trail / Vector Slash lifecycle
+
+Vector Trail is now an independent realtime engine instead of a temporary point array inside the Studio component.
+
+- Timestamped input path.
+- Distance-based resampling to avoid gaps during fast swipes.
+- Automatic intermediate points for long hand movements.
+- Chaikin-style path smoothing before GPU rendering.
+- Path point cap for predictable realtime cost.
+- Velocity-derived trail width.
+- Motion Replay can reconstruct Vector Slash using recorded interaction points.
+- Release modes:
+  - **Hold** — keep the spatial crack open.
+  - **Dissipate** — erase progressively from the start while narrowing.
+  - **Close** — collapse the path toward its center.
+  - **Expand** — widen the crack before it disappears.
+  - **Burst** — push points outward with width expansion and deterministic lateral breakup.
+  - **Shrink** — reduce path width to zero.
+- Release mode is selectable from the Mask panel.
 
 ### Built-in presets
 
@@ -83,7 +102,7 @@ Motion capture is separate from video capture.
 6. Release to let go.
 7. Swipe quickly left/right while not replaying a motion track to switch presets.
 8. Choose **Time Window** to reveal the recent past through the mask.
-9. Choose **Vector Slash** to draw a mask path through space while pinching.
+9. Choose **Vector Slash** to draw a spatial crack; choose its release behavior in the Mask panel.
 10. Open **Motion** and record a gesture performance; replay it Once / Loop / Reverse / Ping Pong.
 11. Upload an image/video as the alternate world behind compatible presets.
 12. Use Record to capture the final WebGL composite.
@@ -99,6 +118,10 @@ Realtime loop (requestAnimationFrame)
         │       ↓
         ├── GestureController / explicit state machine
         │       ↓
+        ├── VectorTrail
+        │       ├── resample + smoothing
+        │       └── release lifecycle
+        │
         ├── MotionRecorder
         │       ├── sparse keyframe capture
         │       └── interpolated playback
@@ -114,7 +137,7 @@ Realtime loop (requestAnimationFrame)
                 └── edge / cursor FX
 ```
 
-React is intentionally not used as the per-frame motion transport. High-frequency gesture, temporal and mask state lives in mutable realtime engine objects; React only handles Studio controls and low-frequency telemetry.
+React is intentionally not used as the per-frame motion transport. High-frequency gesture, temporal, trail and mask state lives in mutable realtime engine objects; React only handles Studio controls and low-frequency telemetry.
 
 ## Local development
 
@@ -142,6 +165,7 @@ src/
     ├── handTracking.ts        MediaPipe initialization + landmark/display mapping
     ├── gesture.ts             Pinch/drag/two-hand/swipe state machine
     ├── motion.ts              Motion capture, sparse keyframes, interpolation and playback
+    ├── trail.ts               Smoothed vector path + release lifecycle engine
     ├── renderer.ts            WebGL2 history textures, shaders, mask/effect/temporal composite
     └── types.ts               Runtime data models + presets
 ```
@@ -155,21 +179,19 @@ The following full-product items are still intentionally **not represented by pl
 - Fully reorderable Effect Stack / blend-mode graph.
 - Motion track import/export and full project serialization UI.
 - Visual keyframe timeline/editor.
-- Trail closure, expansion, burst and shrink lifecycle behaviors.
 - Effect Carousel / authored sequence editor.
 - Advanced edge families such as fire, ice, particle, scanner and electric arcs.
 - Full project preset import/export schema UI.
 - WebGPU enhancement path and worker/offscreen split.
 
-## Next milestone — v0.3 Vector Motion + Effect Graph
+## Next milestone — v0.3 Effect Graph
 
 Recommended implementation order:
 
-1. Upgrade Vector Trail to a timestamped path with per-point lifetime.
-2. Add trail hold / dissipate / close / expand / burst / shrink release behaviors.
-3. Convert freehand trail to a smoothed curve representation suitable for future Bezier editing.
-4. Introduce ping-pong render targets for an ordered Effect Stack.
-5. Make effect processing order materially change output.
-6. Add Effect Carousel and cross-fade / directional / glitch transitions.
-7. Add motion track JSON export/import and project serialization.
-8. Profile Android Chrome, iOS Safari and desktop Chromium on real devices.
+1. Introduce ping-pong render targets for an ordered Effect Stack.
+2. Make effect processing order materially change output.
+3. Support enable/disable, reorder, intensity, opacity and blend-mode metadata per effect node.
+4. Add Effect Carousel and cross-fade / directional / glitch transitions.
+5. Add motion track JSON export/import and project serialization.
+6. Add a visual keyframe timeline/editor.
+7. Profile Android Chrome, iOS Safari and desktop Chromium on real devices.
