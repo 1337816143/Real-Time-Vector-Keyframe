@@ -7,7 +7,10 @@ import type {
 } from './types';
 
 function cloneEffects(effects: EffectSettings): EffectSettings {
-  return { ...effects };
+  return {
+    ...effects,
+    effectStack: effects.effectStack.map((node) => ({ ...node })),
+  };
 }
 
 function cloneFrame(frame: MotionKeyframe): MotionKeyframe {
@@ -43,7 +46,8 @@ function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
     Math.abs(a.effects.distortion - b.effects.distortion) +
     Math.abs(a.effects.glow - b.effects.glow) * 0.02 +
     Math.abs(a.effects.temporalMix - b.effects.temporalMix) * 0.02;
-  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || a.gestureState !== b.gestureState;
+  const stackChanged = JSON.stringify(a.effects.effectStack) !== JSON.stringify(b.effects.effectStack);
+  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || a.gestureState !== b.gestureState;
 }
 
 export class MotionRecorder {
@@ -187,6 +191,7 @@ export class MotionRecorder {
           y: lerp(a.interactionPoint.y, b.interactionPoint.y, mix),
         }
       : mix < 0.5 ? a.interactionPoint : b.interactionPoint;
+    const stackSource = mix < 0.5 ? a.effects.effectStack : b.effects.effectStack;
 
     return {
       t,
@@ -208,6 +213,7 @@ export class MotionRecorder {
         temporalMode: mix < 0.5 ? a.effects.temporalMode : b.effects.temporalMode,
         temporalDelayMs: lerp(a.effects.temporalDelayMs, b.effects.temporalDelayMs, mix),
         temporalMix: lerp(a.effects.temporalMix, b.effects.temporalMix, mix),
+        effectStack: stackSource.map((node) => ({ ...node })),
       },
       gestureState: mix < 0.5 ? a.gestureState : b.gestureState,
       handSpeed: lerp(a.handSpeed, b.handSpeed, mix),
