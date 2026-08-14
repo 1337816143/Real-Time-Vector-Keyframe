@@ -19,6 +19,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import EffectStackEditor from './EffectStackEditor';
 import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
 import { MotionRecorder } from '../engine/motion';
@@ -53,6 +54,13 @@ const initialDebug: EngineDebug = {
   renderScale: 1,
   historyMs: 0,
 };
+
+function cloneEffects(effects: EffectSettings): EffectSettings {
+  return {
+    ...effects,
+    effectStack: effects.effectStack.map((node) => ({ ...node })),
+  };
+}
 
 function supportedMimeType() {
   const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -169,7 +177,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const tutorialStepRef = useRef(0);
   const mirrorRef = useRef(true);
   const maskTypeRef = useRef<MaskType>('portal');
-  const effectsRef = useRef<EffectSettings>({ ...PRESETS.multiverse.effects });
+  const effectsRef = useRef<EffectSettings>(cloneEffects(PRESETS.multiverse.effects));
   const altSourceRef = useRef<TexImageSource>();
   const frozenRef = useRef(false);
 
@@ -179,7 +187,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [mirror, setMirror] = useState(true);
   const [preset, setPreset] = useState<PresetId>('multiverse');
   const [maskType, setMaskType] = useState<MaskType>('portal');
-  const [effects, setEffects] = useState<EffectSettings>({ ...PRESETS.multiverse.effects });
+  const [effects, setEffects] = useState<EffectSettings>(() => cloneEffects(PRESETS.multiverse.effects));
   const [debugVisible, setDebugVisible] = useState(false);
   const [debug, setDebug] = useState<EngineDebug>(initialDebug);
   const [recording, setRecording] = useState(false);
@@ -200,12 +208,13 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
   const applyPreset = useCallback((id: PresetId) => {
     const next = PRESETS[id];
+    const nextEffects = cloneEffects(next.effects);
     presetRef.current = id;
     maskTypeRef.current = next.mask;
-    effectsRef.current = { ...next.effects };
+    effectsRef.current = nextEffects;
     setPreset(id);
     setMaskType(next.mask);
-    setEffects({ ...next.effects });
+    setEffects(nextEffects);
     if (id === 'slash') trailRef.current.begin();
     if (id !== 'freeze') frozenRef.current = false;
   }, []);
@@ -287,7 +296,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     let lastLiveState: RenderState = {
       maskType: maskTypeRef.current,
       transform: { ...DEFAULT_TRANSFORM },
-      effects: { ...effectsRef.current },
+      effects: cloneEffects(effectsRef.current),
       gestureState: 'IDLE',
       handSpeed: 0,
       trail: trailRef.current.render(),
@@ -354,6 +363,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             ...baseEffects,
             rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, gesture.handSpeed * 0.8)),
             distortion: baseEffects.distortion * (1 + Math.min(2.5, gesture.handSpeed)),
+            effectStack: baseEffects.effectStack,
           },
           gestureState: gesture.state,
           handSpeed: gesture.handSpeed,
@@ -370,6 +380,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             ...baseEffects,
             rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, lastLiveState.handSpeed * 0.8)),
             distortion: baseEffects.distortion * (1 + Math.min(2.5, lastLiveState.handSpeed)),
+            effectStack: baseEffects.effectStack,
           },
           trail: trailRef.current.render(now),
           time: now,
@@ -394,7 +405,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           ...lastLiveState,
           maskType: playbackFrame.maskType,
           transform: { ...playbackFrame.transform },
-          effects: { ...playbackFrame.effects },
+          effects: cloneEffects(playbackFrame.effects),
           gestureState: playbackFrame.gestureState,
           handSpeed: playbackFrame.handSpeed,
           trail: playbackFrame.maskType === 'trail' ? trailRef.current.render(now) : lastLiveState.trail,
@@ -623,10 +634,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
               ))}
             </div>
             <label className="upload-row"><Upload size={16} /><span><strong>Alternate world</strong><small>{altMediaName}</small></span><input type="file" accept="image/*,video/*" onChange={(event) => handleAltMedia(event.target.files?.[0])} /></label>
-            <Range label="RGB split" value={effects.rgbSplit} min={0} max={0.04} step={0.001} onChange={(value) => setEffects((e) => ({ ...e, rgbSplit: value }))} />
-            <Range label="Ripple" value={effects.ripple} min={0} max={0.06} step={0.002} onChange={(value) => setEffects((e) => ({ ...e, ripple: value }))} />
-            <Range label="Pixelate" value={effects.pixelate} min={0} max={120} step={4} onChange={(value) => setEffects((e) => ({ ...e, pixelate: value }))} />
+            <Range label="RGB split amount" value={effects.rgbSplit} min={0} max={0.04} step={0.001} onChange={(value) => setEffects((e) => ({ ...e, rgbSplit: value }))} />
+            <Range label="Ripple amount" value={effects.ripple} min={0} max={0.06} step={0.002} onChange={(value) => setEffects((e) => ({ ...e, ripple: value }))} />
+            <Range label="Pixelate cells" value={effects.pixelate} min={0} max={120} step={4} onChange={(value) => setEffects((e) => ({ ...e, pixelate: value }))} />
+            <Range label="Distortion amount" value={effects.distortion} min={0} max={0.06} step={0.002} onChange={(value) => setEffects((e) => ({ ...e, distortion: value }))} />
             <Range label="Edge glow" value={effects.glow} min={0} max={1.8} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, glow: value }))} />
+
+            <EffectStackEditor effects={effects} onChange={setEffects} />
+
             <span className="eyebrow">TEMPORAL FX</span>
             <div className="segmented-grid">
               {TEMPORAL_MODES.map((mode) => <button key={mode} className={effects.temporalMode === mode ? 'selected' : ''} onClick={() => setEffects((e) => ({ ...e, temporalMode: mode }))}>{temporalLabel(mode)}</button>)}
@@ -634,7 +649,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             {effects.temporalMode !== 'none' && <Range label="History delay (ms)" value={effects.temporalDelayMs} min={150} max={2000} step={50} onChange={(value) => setEffects((e) => ({ ...e, temporalDelayMs: value }))} />}
             {(effects.temporalMode === 'echo' || effects.temporalMode === 'afterImage') && <Range label="Temporal mix" value={effects.temporalMix} min={0.05} max={1} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, temporalMix: value }))} />}
             <Toggle label="Invert mask" checked={effects.invertMask} onChange={(value) => setEffects((e) => ({ ...e, invertMask: value }))} />
-            <p className="panel-note">Time Window samples the real camera history buffer. Echo and After Image blend historical frames in the WebGL shader rather than reusing a frozen screenshot.</p>
+            <p className="panel-note">Temporal source selection runs before the ordered Effect Stack. Every enabled stack node then gets its own GPU pass before the final mask composite.</p>
           </>
         )}
 
@@ -677,7 +692,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
                 <button className="secondary-button" onClick={clearMotion}><Trash2 size={16} /> Clear motion</button>
               </>
             )}
-            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect, gesture-state and interaction-point changes. Vector Slash replay rebuilds its path from the recorded hand interaction points.</p>
+            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect-stack, gesture-state and interaction-point changes. Vector Slash replay rebuilds its path from the recorded hand interaction points.</p>
           </div>
         )}
 
@@ -685,7 +700,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           <div className="record-panel">
             {!recording ? <button className="record-button" onClick={startRecording}><Radio size={18} /> Start video recording</button> : <button className="record-button recording" onClick={stopRecording}><Square size={17} fill="currentColor" /> Stop recording</button>}
             {recordingUrl && <div className="record-preview"><video src={recordingUrl} controls playsInline /><a className="secondary-button" href={recordingUrl} download={`vector-keyframe-${Date.now()}.webm`}>Save WebM</a></div>}
-            <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + mask + VFX. Studio UI and debug overlays are excluded.</p>
+            <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + ordered effect passes + mask + edge VFX. Studio UI and debug overlays are excluded.</p>
           </div>
         )}
 
