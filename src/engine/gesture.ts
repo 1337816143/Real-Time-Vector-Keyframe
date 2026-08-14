@@ -44,6 +44,10 @@ export class GestureController {
     this.transform = { ...next };
   }
 
+  getTransform() {
+    return { ...this.transform };
+  }
+
   getState() {
     return this.state;
   }
