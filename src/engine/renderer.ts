@@ -1,6 +1,7 @@
 import type {
   EffectBlendMode,
   EffectNodeType,
+  EffectTransitionType,
   RenderState,
   TemporalMode,
 } from './types';
@@ -147,6 +148,7 @@ in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uCamera;
 uniform sampler2D uEffect;
+uniform sampler2D uPreviousEffect;
 uniform vec2 uViewport;
 uniform vec2 uCameraSize;
 uniform float uTime;
@@ -163,6 +165,9 @@ uniform float uHoverVisible;
 uniform int uGestureState;
 uniform int uTrailCount;
 uniform vec3 uTrail[32];
+uniform int uTransitionType;
+uniform float uTransitionProgress;
+uniform float uTransitionDirection;
 
 vec2 coverUv(vec2 uv, vec2 sourceSize) {
   float viewportAspect = uViewport.x / max(1.0, uViewport.y);
@@ -242,9 +247,47 @@ float maskSdf(vec2 uv) {
   return best;
 }
 
+float liquidNoise(vec2 uv) {
+  return 0.5
+    + sin(uv.y * 28.0 + uTime * 2.5) * 0.16
+    + sin(uv.x * 19.0 - uv.y * 11.0 + uTime * 1.7) * 0.11
+    + sin((uv.x + uv.y) * 43.0 - uTime * 3.1) * 0.06;
+}
+
+vec3 transitionEffect(vec2 uv) {
+  vec3 previous = texture(uPreviousEffect, clamp(uv, vec2(0.001), vec2(0.999))).rgb;
+  vec3 next = texture(uEffect, clamp(uv, vec2(0.001), vec2(0.999))).rgb;
+  float p = clamp(uTransitionProgress, 0.0, 1.0);
+  if (uTransitionType == 0) return next;
+  if (uTransitionType == 1) return mix(previous, next, smoothstep(0.0, 1.0, p));
+  if (uTransitionType == 2) {
+    float axis = uTransitionDirection >= 0.0 ? uv.x : 1.0 - uv.x;
+    float reveal = 1.0 - smoothstep(p - 0.055, p + 0.055, axis);
+    return mix(previous, next, reveal);
+  }
+  if (uTransitionType == 3) {
+    float energy = sin(p * 3.14159265);
+    float band = floor(uv.y * 17.0);
+    float jitter = sin(band * 14.17 + uTime * 27.0) * 0.018 * energy;
+    vec2 shift = vec2(jitter, 0.0);
+    vec3 a = texture(uPreviousEffect, clamp(uv - shift, vec2(0.001), vec2(0.999))).rgb;
+    vec3 b = texture(uEffect, clamp(uv + shift, vec2(0.001), vec2(0.999))).rgb;
+    vec3 mixed = mix(a, b, p);
+    mixed.r = mix(mixed.r, texture(uEffect, clamp(uv + shift * 1.8, vec2(0.001), vec2(0.999))).r, energy * 0.65);
+    mixed.b = mix(mixed.b, texture(uPreviousEffect, clamp(uv - shift * 1.6, vec2(0.001), vec2(0.999))).b, energy * 0.5);
+    return mixed;
+  }
+  if (uTransitionType == 4) {
+    vec3 mixed = mix(previous, next, p);
+    return mixed + vec3(1.0) * sin(p * 3.14159265) * 0.7;
+  }
+  float reveal = smoothstep(liquidNoise(uv) - 0.12, liquidNoise(uv) + 0.12, p);
+  return mix(previous, next, reveal);
+}
+
 void main() {
   vec3 base = texture(uCamera, cameraUv(vUv)).rgb;
-  vec3 effect = texture(uEffect, clamp(vUv, vec2(0.001), vec2(0.999))).rgb;
+  vec3 effect = transitionEffect(vUv);
   float sd = maskSdf(vUv);
   float feather = 0.0045 + min(uHandSpeed, 2.0) * 0.0015;
   float maskAlpha = 1.0 - smoothstep(-feather, feather, sd);
@@ -348,6 +391,14 @@ const BLEND_MODE: Record<EffectBlendMode, number> = {
   multiply: 3,
 };
 
+const TRANSITION_TYPE: Record<EffectTransitionType, number> = {
+  crossFade: 1,
+  directionalWipe: 2,
+  glitch: 3,
+  flash: 4,
+  liquid: 5,
+};
+
 export class VfxRenderer {
   private gl: WebGL2RenderingContext;
   private sourceProgram: WebGLProgram;
@@ -362,6 +413,12 @@ export class VfxRenderer {
   private vao: WebGLVertexArrayObject;
   private ping: RenderTarget;
   private pong: RenderTarget;
+  private transitionSnapshot: RenderTarget;
+  private lastProcessedTarget?: RenderTarget;
+  private transitionStart = 0;
+  private transitionDuration = 0;
+  private transitionType: EffectTransitionType = 'crossFade';
+  private transitionDirection = 1;
   private cameraSize: [number, number] = [1280, 720];
   private altSize: [number, number] = [1280, 720];
   private renderScale = 1;
@@ -380,6 +437,7 @@ export class VfxRenderer {
     this.history = Array.from({ length: 15 }, () => ({ texture: createTexture(gl), timestamp: 0, initialized: false }));
     this.ping = this.createRenderTarget();
     this.pong = this.createRenderTarget();
+    this.transitionSnapshot = this.createRenderTarget();
     const vao = gl.createVertexArray();
     if (!vao) throw new Error('Unable to create VAO');
     this.vao = vao;
@@ -397,7 +455,7 @@ export class VfxRenderer {
   }
 
   private resizeTarget(target: RenderTarget, width: number, height: number) {
-    if (target.width === width && target.height === height) return;
+    if (target.width === width && target.height === height) return false;
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, target.texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -409,6 +467,7 @@ export class VfxRenderer {
     if (status !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`Effect framebuffer incomplete: ${status}`);
     target.width = width;
     target.height = height;
+    return true;
   }
 
   private uniform(program: WebGLProgram, name: string) {
@@ -453,15 +512,40 @@ export class VfxRenderer {
     return Math.max(0, now - Math.min(...initialized.map((slot) => slot.timestamp)));
   }
 
+  beginTransition(type: EffectTransitionType, durationMs = 650, direction: -1 | 1 = 1, now = performance.now()) {
+    const source = this.lastProcessedTarget;
+    if (!source || this.canvas.width <= 1 || this.canvas.height <= 1) return false;
+    this.resizeTarget(this.transitionSnapshot, this.canvas.width, this.canvas.height);
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, source.framebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.transitionSnapshot.framebuffer);
+    gl.blitFramebuffer(
+      0, 0, this.canvas.width, this.canvas.height,
+      0, 0, this.canvas.width, this.canvas.height,
+      gl.COLOR_BUFFER_BIT,
+      gl.LINEAR,
+    );
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    this.transitionType = type;
+    this.transitionDuration = Math.max(80, durationMs);
+    this.transitionDirection = direction;
+    this.transitionStart = now;
+    return true;
+  }
+
   resize() {
     const width = Math.max(1, Math.round(this.canvas.clientWidth * devicePixelRatio * this.renderScale));
     const height = Math.max(1, Math.round(this.canvas.clientHeight * devicePixelRatio * this.renderScale));
-    if (this.canvas.width !== width || this.canvas.height !== height) {
+    const canvasChanged = this.canvas.width !== width || this.canvas.height !== height;
+    if (canvasChanged) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
     this.resizeTarget(this.ping, width, height);
     this.resizeTarget(this.pong, width, height);
+    const snapshotChanged = this.resizeTarget(this.transitionSnapshot, width, height);
+    if (canvasChanged || snapshotChanged) this.transitionStart = 0;
   }
 
   private upload(texture: WebGLTexture, source: TexImageSource, size: [number, number]) {
@@ -545,12 +629,12 @@ export class VfxRenderer {
     const gl = this.gl;
     const program = this.effectProgram;
     const active = state.effects.effectStack.filter((node) => node.enabled && node.opacity > 0 && node.intensity > 0);
-    let input = this.ping.texture;
+    let inputTarget = this.ping;
     let writeTarget = this.pong;
 
     for (const node of active) {
       gl.useProgram(program);
-      this.bindTexture(0, input);
+      this.bindTexture(0, inputTarget.texture);
       gl.uniform1i(this.uniform(program, 'uInput'), 0);
       gl.uniform2f(this.uniform(program, 'uViewport'), this.canvas.width, this.canvas.height);
       gl.uniform2f(this.uniform(program, 'uMaskCenter'), state.transform.x, 1 - state.transform.y);
@@ -562,21 +646,32 @@ export class VfxRenderer {
       gl.uniform1f(this.uniform(program, 'uOpacity'), node.opacity);
       gl.uniform1i(this.uniform(program, 'uBlendMode'), BLEND_MODE[node.blendMode]);
       this.drawTo(writeTarget.framebuffer);
-      input = writeTarget.texture;
+      inputTarget = writeTarget;
       writeTarget = writeTarget === this.pong ? this.ping : this.pong;
     }
 
-    return input;
+    return inputTarget;
   }
 
-  private renderComposite(state: RenderState, effectTexture: WebGLTexture) {
+  private transitionProgress(now: number) {
+    if (!this.transitionStart || this.transitionDuration <= 0) return 1;
+    const progress = Math.min(1, Math.max(0, (now - this.transitionStart) / this.transitionDuration));
+    if (progress >= 1) this.transitionStart = 0;
+    return progress;
+  }
+
+  private renderComposite(state: RenderState, effectTarget: RenderTarget) {
     const gl = this.gl;
     const program = this.compositeProgram;
+    const progress = this.transitionProgress(state.time);
+    const transitioning = this.transitionStart > 0 || progress < 1;
     gl.useProgram(program);
     this.bindTexture(0, this.cameraTexture);
-    this.bindTexture(1, effectTexture);
+    this.bindTexture(1, effectTarget.texture);
+    this.bindTexture(2, transitioning ? this.transitionSnapshot.texture : effectTarget.texture);
     gl.uniform1i(this.uniform(program, 'uCamera'), 0);
     gl.uniform1i(this.uniform(program, 'uEffect'), 1);
+    gl.uniform1i(this.uniform(program, 'uPreviousEffect'), 2);
     gl.uniform2f(this.uniform(program, 'uViewport'), this.canvas.width, this.canvas.height);
     gl.uniform2f(this.uniform(program, 'uCameraSize'), this.cameraSize[0], this.cameraSize[1]);
     gl.uniform1f(this.uniform(program, 'uTime'), state.time / 1000);
@@ -592,6 +687,9 @@ export class VfxRenderer {
     gl.uniform2f(this.uniform(program, 'uHover'), hover?.x ?? -2, hover ? 1 - hover.y : -2);
     gl.uniform1f(this.uniform(program, 'uHoverVisible'), hover ? 1 : 0);
     gl.uniform1i(this.uniform(program, 'uGestureState'), ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'].indexOf(state.gestureState));
+    gl.uniform1i(this.uniform(program, 'uTransitionType'), transitioning ? TRANSITION_TYPE[this.transitionType] : 0);
+    gl.uniform1f(this.uniform(program, 'uTransitionProgress'), transitioning ? progress : 1);
+    gl.uniform1f(this.uniform(program, 'uTransitionDirection'), this.transitionDirection);
 
     const trail = state.trail.slice(-32);
     const flat = new Float32Array(32 * 3);
@@ -616,6 +714,7 @@ export class VfxRenderer {
     const historyB = this.historyTexture(state.time, Math.min(2100, state.effects.temporalDelayMs * 1.65 + 180));
     this.renderSource(state, historyA, historyB);
     const processed = this.renderEffects(state);
+    this.lastProcessedTarget = processed;
     this.renderComposite(state, processed);
   }
 
@@ -624,10 +723,10 @@ export class VfxRenderer {
     gl.deleteTexture(this.cameraTexture);
     gl.deleteTexture(this.alternateTexture);
     this.history.forEach((slot) => gl.deleteTexture(slot.texture));
-    gl.deleteTexture(this.ping.texture);
-    gl.deleteFramebuffer(this.ping.framebuffer);
-    gl.deleteTexture(this.pong.texture);
-    gl.deleteFramebuffer(this.pong.framebuffer);
+    for (const target of [this.ping, this.pong, this.transitionSnapshot]) {
+      gl.deleteTexture(target.texture);
+      gl.deleteFramebuffer(target.framebuffer);
+    }
     gl.deleteProgram(this.sourceProgram);
     gl.deleteProgram(this.effectProgram);
     gl.deleteProgram(this.compositeProgram);
