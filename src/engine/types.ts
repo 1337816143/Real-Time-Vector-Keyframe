@@ -89,6 +89,7 @@ export interface MotionKeyframe {
   effects: EffectSettings;
   gestureState: GestureState;
   handSpeed: number;
+  interactionPoint?: Vec2;
 }
 
 export interface MotionTrack {
