@@ -29,6 +29,7 @@ import {
   DEFAULT_TRANSFORM,
   PRESETS,
   type EffectSettings,
+  type EffectTransitionType,
   type EngineDebug,
   type MaskType,
   type PlaybackMode,
@@ -42,6 +43,7 @@ import {
 const PRESET_ORDER: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
 const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
 const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
+const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'glitch', 'flash', 'liquid'];
 
 const initialDebug: EngineDebug = {
   fps: 0,
@@ -154,6 +156,14 @@ function temporalLabel(mode: TemporalMode) {
   return 'None';
 }
 
+function transitionLabel(type: EffectTransitionType) {
+  if (type === 'crossFade') return 'Cross Fade';
+  if (type === 'directionalWipe') return 'Wipe';
+  if (type === 'glitch') return 'Glitch';
+  if (type === 'flash') return 'Flash';
+  return 'Liquid';
+}
+
 export default function Studio({ onExit }: { onExit: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -178,6 +188,8 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const mirrorRef = useRef(true);
   const maskTypeRef = useRef<MaskType>('portal');
   const effectsRef = useRef<EffectSettings>(cloneEffects(PRESETS.multiverse.effects));
+  const transitionTypeRef = useRef<EffectTransitionType>('crossFade');
+  const transitionDurationRef = useRef(650);
   const altSourceRef = useRef<TexImageSource>();
   const frozenRef = useRef(false);
 
@@ -205,10 +217,21 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [motionProgress, setMotionProgress] = useState(0);
   const [trailReleaseMode, setTrailReleaseMode] = useState<TrailReleaseMode>('dissipate');
   const [trailPoints, setTrailPoints] = useState(0);
+  const [carouselEnabled, setCarouselEnabled] = useState(false);
+  const [carouselInterval, setCarouselInterval] = useState(3500);
+  const [transitionType, setTransitionType] = useState<EffectTransitionType>('crossFade');
+  const [transitionDuration, setTransitionDuration] = useState(650);
 
-  const applyPreset = useCallback((id: PresetId) => {
+  const applyPreset = useCallback((id: PresetId, direction: -1 | 1 = 1, animate = true) => {
     const next = PRESETS[id];
     const nextEffects = cloneEffects(next.effects);
+    if (animate && id !== presetRef.current) {
+      rendererRef.current?.beginTransition(
+        transitionTypeRef.current,
+        transitionDurationRef.current,
+        direction,
+      );
+    }
     presetRef.current = id;
     maskTypeRef.current = next.mask;
     effectsRef.current = nextEffects;
@@ -222,7 +245,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const cyclePreset = useCallback((direction: -1 | 1) => {
     const current = PRESET_ORDER.indexOf(presetRef.current);
     const nextIndex = (current + direction + PRESET_ORDER.length) % PRESET_ORDER.length;
-    applyPreset(PRESET_ORDER[nextIndex]);
+    applyPreset(PRESET_ORDER[nextIndex], direction, true);
   }, [applyPreset]);
 
   const captureFreeze = useCallback(() => {
@@ -276,11 +299,21 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   useEffect(() => { effectsRef.current = effects; }, [effects]);
   useEffect(() => { presetRef.current = preset; }, [preset]);
   useEffect(() => { trailRef.current.setReleaseMode(trailReleaseMode); }, [trailReleaseMode]);
+  useEffect(() => { transitionTypeRef.current = transitionType; }, [transitionType]);
+  useEffect(() => { transitionDurationRef.current = transitionDuration; }, [transitionDuration]);
 
   useEffect(() => {
     setMirror(facingMode === 'user');
     void startCamera(facingMode);
   }, [facingMode, startCamera]);
+
+  useEffect(() => {
+    if (!carouselEnabled || status !== 'ready') return;
+    const timer = window.setInterval(() => {
+      if (!motionRef.current.isPlaying() && !motionRef.current.isRecording()) cyclePreset(1);
+    }, Math.max(1200, carouselInterval));
+    return () => window.clearInterval(timer);
+  }, [carouselEnabled, carouselInterval, cyclePreset, status]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -628,11 +661,23 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           <>
             <div className="preset-grid">
               {PRESET_ORDER.map((id) => (
-                <button key={id} className={`preset-button ${preset === id ? 'selected' : ''}`} onClick={() => applyPreset(id)}>
+                <button key={id} className={`preset-button ${preset === id ? 'selected' : ''}`} onClick={() => applyPreset(id, 1, true)}>
                   <span>{PRESETS[id].label}</span><small>{id === 'slash' ? 'Trail' : PRESETS[id].mask}</small>
                 </button>
               ))}
             </div>
+
+            <span className="eyebrow">EFFECT MODE · CAROUSEL</span>
+            <Toggle label="Auto carousel" checked={carouselEnabled} onChange={setCarouselEnabled} />
+            {carouselEnabled && <Range label="Carousel interval (ms)" value={carouselInterval} min={1500} max={10000} step={250} onChange={setCarouselInterval} />}
+            <span className="eyebrow">PRESET TRANSITION</span>
+            <div className="segmented-grid">
+              {TRANSITIONS.map((type) => (
+                <button key={type} className={transitionType === type ? 'selected' : ''} onClick={() => setTransitionType(type)}>{transitionLabel(type)}</button>
+              ))}
+            </div>
+            <Range label="Transition duration (ms)" value={transitionDuration} min={120} max={1800} step={60} onChange={setTransitionDuration} />
+
             <label className="upload-row"><Upload size={16} /><span><strong>Alternate world</strong><small>{altMediaName}</small></span><input type="file" accept="image/*,video/*" onChange={(event) => handleAltMedia(event.target.files?.[0])} /></label>
             <Range label="RGB split amount" value={effects.rgbSplit} min={0} max={0.04} step={0.001} onChange={(value) => setEffects((e) => ({ ...e, rgbSplit: value }))} />
             <Range label="Ripple amount" value={effects.ripple} min={0} max={0.06} step={0.002} onChange={(value) => setEffects((e) => ({ ...e, ripple: value }))} />
@@ -649,7 +694,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             {effects.temporalMode !== 'none' && <Range label="History delay (ms)" value={effects.temporalDelayMs} min={150} max={2000} step={50} onChange={(value) => setEffects((e) => ({ ...e, temporalDelayMs: value }))} />}
             {(effects.temporalMode === 'echo' || effects.temporalMode === 'afterImage') && <Range label="Temporal mix" value={effects.temporalMix} min={0.05} max={1} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, temporalMix: value }))} />}
             <Toggle label="Invert mask" checked={effects.invertMask} onChange={(value) => setEffects((e) => ({ ...e, invertMask: value }))} />
-            <p className="panel-note">Temporal source selection runs before the ordered Effect Stack. Every enabled stack node then gets its own GPU pass before the final mask composite.</p>
+            <p className="panel-note">Manual preset changes, swipe changes and Carousel all snapshot the previous processed GPU texture first. The selected transition is rendered into the final canvas, so recordings include it.</p>
           </>
         )}
 
@@ -700,7 +745,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           <div className="record-panel">
             {!recording ? <button className="record-button" onClick={startRecording}><Radio size={18} /> Start video recording</button> : <button className="record-button recording" onClick={stopRecording}><Square size={17} fill="currentColor" /> Stop recording</button>}
             {recordingUrl && <div className="record-preview"><video src={recordingUrl} controls playsInline /><a className="secondary-button" href={recordingUrl} download={`vector-keyframe-${Date.now()}.webm`}>Save WebM</a></div>}
-            <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + ordered effect passes + mask + edge VFX. Studio UI and debug overlays are excluded.</p>
+            <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + ordered effect passes + transitions + mask + edge VFX. Studio UI and debug overlays are excluded.</p>
           </div>
         )}
 
