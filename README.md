@@ -4,11 +4,11 @@ A browser-based realtime VFX studio where hand landmarks directly manipulate GPU
 
 The product goal is not a web clone of a traditional video editor. The interaction model is:
 
-**camera → hand tracking → gesture state machine → vector mask → GPU effect composite → recording**
+**camera → hand tracking → gesture state machine → vector mask → GPU effect composite → temporal/motion system → recording**
 
-## v0.1 MVP baseline
+## Current baseline — v0.2 Temporal + Motion
 
-This repository currently implements the first working realtime foundation:
+### Realtime interaction foundation
 
 - Browser camera capture with front/back camera switching.
 - Mirrored front-camera mode and aspect-correct `cover` mapping.
@@ -25,13 +25,53 @@ This repository currently implements the first working realtime foundation:
 - Vector Trail / Vector Slash mode generated from hand movement.
 - Velocity-reactive deformation, RGB split, ripple, distortion and edge glow.
 - Alternate image/video upload for the world behind the mask.
-- Freeze World preset using a captured camera frame.
-- Presets: Multiverse Portal, Cyber Reality, Dream Window, Freeze World and Vector Slash.
+- Freeze World using a captured camera frame.
 - Canvas recording with `MediaRecorder`; Studio controls/debug overlays are excluded from the exported video.
 - 21-landmark tracking debug overlay and realtime telemetry HUD.
 - Adaptive render-resolution reduction when sustained FPS drops.
 - Desktop control panel and mobile bottom-sheet style layout.
 - Local-first camera processing UI notice.
+
+### True temporal VFX
+
+The renderer now owns a real camera-history ring buffer rather than simulating delay with one frozen frame.
+
+- 15 historical camera textures.
+- New history frame captured about every 150 ms.
+- Roughly 2 seconds of live history after the buffer warms up.
+- Delay selection chooses the historical texture nearest the requested timestamp.
+- **Time Window**: the mask reveals a real past camera frame.
+- **Echo**: current + two historical moments are composited in GLSL.
+- **After Image**: current and delayed camera frames are blended in GLSL.
+- Temporal delay adjustable from 150–2000 ms in Studio.
+- Temporal mix adjustable for Echo / After Image.
+- Temporal history depth is exposed in the debug HUD.
+
+### Motion Recording / automatic keyframes
+
+Motion capture is separate from video capture.
+
+- Record live mask transforms.
+- Record mask type changes.
+- Record effect parameters, including temporal settings.
+- Record gesture state and hand velocity.
+- Record the hand interaction point used by the realtime interaction layer.
+- Automatically create sparse keyframes based on meaningful motion/effect changes rather than blindly storing every render frame.
+- Periodic safety keyframes prevent long static sections from losing timing information.
+- Interpolate position and scale during replay.
+- Shortest-path interpolation for rotation.
+- Interpolate numeric Effect parameters during replay.
+- Replay modes: **Once**, **Loop**, **Reverse**, **Ping Pong**.
+- Playback duration, keyframe count and progress exposed in Studio.
+
+### Built-in presets
+
+- Multiverse Portal
+- Cyber Reality
+- Dream Window
+- **Time Window**
+- Freeze World
+- Vector Slash
 
 ## Interaction
 
@@ -41,10 +81,12 @@ This repository currently implements the first working realtime foundation:
 4. Keep pinching and move to drag the mask.
 5. Pinch with two hands to scale/rotate.
 6. Release to let go.
-7. Swipe quickly left/right while not pinching to switch presets.
-8. Choose **Vector Slash** to draw a mask path through space while pinching.
-9. Upload an image/video as the alternate world behind compatible presets.
-10. Use Record to capture the final WebGL composite.
+7. Swipe quickly left/right while not replaying a motion track to switch presets.
+8. Choose **Time Window** to reveal the recent past through the mask.
+9. Choose **Vector Slash** to draw a mask path through space while pinching.
+10. Open **Motion** and record a gesture performance; replay it Once / Loop / Reverse / Ping Pong.
+11. Upload an image/video as the alternate world behind compatible presets.
+12. Use Record to capture the final WebGL composite.
 
 ## Architecture
 
@@ -55,18 +97,24 @@ Realtime loop (requestAnimationFrame)
         ├── Camera video
         ├── HandTracker (MediaPipe, ~20–30 FPS)
         │       ↓
-        ├── GestureController / state machine
+        ├── GestureController / explicit state machine
         │       ↓
+        ├── MotionRecorder
+        │       ├── sparse keyframe capture
+        │       └── interpolated playback
+        │
         └── VfxRenderer (WebGL2 / GLSL, display FPS)
-                ├── camera texture
-                ├── alternate texture
+                ├── current camera texture
+                ├── alternate media texture
+                ├── 15-slot camera history ring
+                ├── historical texture selection
                 ├── procedural vector mask SDF
-                ├── effect processing
+                ├── temporal/effect processing
                 ├── mask composite
                 └── edge / cursor FX
 ```
 
-React is intentionally not used as the per-frame motion transport. High-frequency gesture/mask state lives in mutable realtime engine objects; React only handles Studio controls and low-frequency telemetry.
+React is intentionally not used as the per-frame motion transport. High-frequency gesture, temporal and mask state lives in mutable realtime engine objects; React only handles Studio controls and low-frequency telemetry.
 
 ## Local development
 
@@ -89,39 +137,39 @@ Camera access requires a secure context in normal browser deployment (`https://`
 src/
 ├── App.tsx                    Landing / Studio entry
 ├── components/
-│   └── Studio.tsx             Camera lifecycle, realtime orchestration, UI, recording
+│   └── Studio.tsx             Camera lifecycle, realtime orchestration, UI, video + motion recording
 └── engine/
     ├── handTracking.ts        MediaPipe initialization + landmark/display mapping
     ├── gesture.ts             Pinch/drag/two-hand/swipe state machine
-    ├── renderer.ts            WebGL2 textures, shaders, mask/effect composite
+    ├── motion.ts              Motion capture, sparse keyframes, interpolation and playback
+    ├── renderer.ts            WebGL2 history textures, shaders, mask/effect/temporal composite
     └── types.ts               Runtime data models + presets
 ```
 
-## Deliberately not faked in v0.1
+## Deliberately not faked yet
 
-The following items from the full product specification are **not presented as completed yet** and should be implemented in later phases rather than represented by placeholder buttons:
+The following full-product items are still intentionally **not represented by placeholder controls**:
 
 - Editable Bezier anchor/control handles.
 - Multi-mask scene graph with independent stacks.
 - Fully reorderable Effect Stack / blend-mode graph.
-- Temporal ring-buffer effects such as true 500–2000 ms Time Window and multi-frame Echo.
-- Keyframe timeline, replay, reverse and ping-pong.
-- Motion Recording serialization.
+- Motion track import/export and full project serialization UI.
+- Visual keyframe timeline/editor.
+- Trail closure, expansion, burst and shrink lifecycle behaviors.
 - Effect Carousel / authored sequence editor.
 - Advanced edge families such as fire, ice, particle, scanner and electric arcs.
 - Full project preset import/export schema UI.
 - WebGPU enhancement path and worker/offscreen split.
 
-These are the next layers to add after the camera → hand → gesture → GPU mask loop is proven stable on real devices.
+## Next milestone — v0.3 Vector Motion + Effect Graph
 
-## Implementation priority
+Recommended implementation order:
 
-The next recommended milestone is **v0.2 — temporal + motion system**:
-
-1. GPU frame-history ring buffer.
-2. True Time Window / Echo / After Image.
-3. Record Motion event stream.
-4. Keyframe generation from gesture motion.
-5. Replay / Loop / Reverse / Ping Pong.
-6. Trail lifetime, expansion, closure and burst behaviors.
-7. Performance/device profiling on Android Chrome, iOS Safari and desktop Chromium.
+1. Upgrade Vector Trail to a timestamped path with per-point lifetime.
+2. Add trail hold / dissipate / close / expand / burst / shrink release behaviors.
+3. Convert freehand trail to a smoothed curve representation suitable for future Bezier editing.
+4. Introduce ping-pong render targets for an ordered Effect Stack.
+5. Make effect processing order materially change output.
+6. Add Effect Carousel and cross-fade / directional / glitch transitions.
+7. Add motion track JSON export/import and project serialization.
+8. Profile Android Chrome, iOS Safari and desktop Chromium on real devices.
