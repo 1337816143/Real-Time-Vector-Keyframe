@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import EffectStackEditor from './EffectStackEditor';
+import MotionTimeline from './MotionTimeline';
 import ProjectControls from './ProjectControls';
 import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
@@ -494,7 +495,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         setMotionPlaying(motionRef.current.isPlaying());
         setMotionFrames(track?.keyframes.length ?? 0);
         setMotionDuration(track?.duration ?? 0);
-        setMotionProgress(motionRef.current.getProgress(now));
+        if (motionRef.current.isPlaying()) setMotionProgress(motionRef.current.getProgress(now));
         setTrailPoints(trailRef.current.getPointCount());
         lastDebugUi = now;
       }
@@ -580,6 +581,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     setMotionRecording(false);
     setMotionFrames(track?.keyframes.length ?? 0);
     setMotionDuration(track?.duration ?? 0);
+    setMotionProgress(0);
   };
 
   const playMotion = (mode: PlaybackMode) => {
@@ -603,6 +605,36 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     setMotionFrames(0);
     setMotionDuration(0);
     setMotionProgress(0);
+  };
+
+  const scrubMotion = (timeMs: number) => {
+    const track = motionRef.current.getTrack();
+    if (!track || track.duration <= 0) return;
+    motionRef.current.stopPlayback();
+    setMotionPlaying(false);
+    const frame = motionRef.current.sampleAtTime(timeMs);
+    if (!frame) return;
+
+    gestureRef.current.setTransform(frame.transform);
+    maskTypeRef.current = frame.maskType;
+    setMaskType(frame.maskType);
+    const scrubEffects = cloneEffects(frame.effects);
+    effectsRef.current = scrubEffects;
+    setEffects(scrubEffects);
+
+    trailRef.current.clear();
+    if (frame.maskType === 'trail') {
+      for (const keyframe of track.keyframes) {
+        if (keyframe.t > timeMs) break;
+        if (keyframe.interactionPoint && ['PINCH_START', 'GRABBED', 'DRAGGING'].includes(keyframe.gestureState)) {
+          trailRef.current.add({
+            ...keyframe.interactionPoint,
+            width: Math.min(0.085, 0.022 + keyframe.handSpeed * 0.055),
+          }, keyframe.t);
+        }
+      }
+    }
+    setMotionProgress(Math.min(1, Math.max(0, timeMs / track.duration)));
   };
 
   const resetMask = () => {
@@ -808,6 +840,12 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             <Metric label="Keyframes" value={String(motionFrames)} />
             <Metric label="Duration" value={`${(motionDuration / 1000).toFixed(2)} s`} />
             <Metric label="Playback" value={motionPlaying ? `${motionMode} · ${Math.round(motionProgress * 100)}%` : 'stopped'} />
+            <MotionTimeline
+              track={motionRef.current.getTrack()}
+              progress={motionProgress}
+              playing={motionPlaying}
+              onScrub={scrubMotion}
+            />
             {motionFrames > 1 && (
               <>
                 <div className="segmented-grid">
@@ -820,7 +858,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
                 <button className="secondary-button" onClick={clearMotion}><Trash2 size={16} /> Clear motion</button>
               </>
             )}
-            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect-stack, gesture-state and interaction-point changes. Vector Slash replay rebuilds its path from the recorded hand interaction points.</p>
+            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect-stack, gesture-state and interaction-point changes. Scrubbing evaluates the same interpolation path as playback; Vector Slash reconstructs its crack up to the selected time.</p>
           </div>
         )}
 
