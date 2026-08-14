@@ -20,9 +20,11 @@ import {
   X,
 } from 'lucide-react';
 import EffectStackEditor from './EffectStackEditor';
+import ProjectControls from './ProjectControls';
 import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
 import { MotionRecorder } from '../engine/motion';
+import { createProjectSnapshot, parseProject, stringifyProject } from '../engine/project';
 import { VfxRenderer } from '../engine/renderer';
 import { VectorTrail } from '../engine/trail';
 import {
@@ -221,6 +223,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [carouselInterval, setCarouselInterval] = useState(3500);
   const [transitionType, setTransitionType] = useState<EffectTransitionType>('crossFade');
   const [transitionDuration, setTransitionDuration] = useState(650);
+  const [projectMessage, setProjectMessage] = useState('');
 
   const applyPreset = useCallback((id: PresetId, direction: -1 | 1 = 1, animate = true) => {
     const next = PRESETS[id];
@@ -607,6 +610,86 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     trailRef.current.clear();
   };
 
+  const exportProject = () => {
+    const project = createProjectSnapshot({
+      preset: presetRef.current,
+      mask: {
+        type: maskTypeRef.current,
+        transform: gestureRef.current.getTransform(),
+        trailReleaseMode,
+      },
+      effects: cloneEffects(effectsRef.current),
+      carousel: {
+        enabled: carouselEnabled,
+        intervalMs: carouselInterval,
+        transitionType,
+        transitionDurationMs: transitionDuration,
+      },
+      motion: motionRef.current.getTrack(),
+    });
+    const blob = new Blob([stringifyProject(project)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    objectUrlsRef.current.push(url);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `vector-keyframe-project-${Date.now()}.json`;
+    anchor.click();
+    setProjectMessage(`Project exported · ${project.motion?.keyframes.length ?? 0} motion keyframes`);
+  };
+
+  const importProject = async (file?: File) => {
+    if (!file) return;
+    try {
+      const project = parseProject(await file.text());
+      rendererRef.current?.beginTransition(
+        project.carousel.transitionType,
+        project.carousel.transitionDurationMs,
+        1,
+      );
+
+      presetRef.current = project.preset;
+      setPreset(project.preset);
+      maskTypeRef.current = project.mask.type;
+      setMaskType(project.mask.type);
+      gestureRef.current.setTransform(project.mask.transform);
+      trailRef.current.clear();
+      trailRef.current.setReleaseMode(project.mask.trailReleaseMode);
+      setTrailReleaseMode(project.mask.trailReleaseMode);
+
+      const importedEffects = cloneEffects(project.effects);
+      const needsExternalMedia = project.preset !== 'freeze' && importedEffects.useAlternateMedia;
+      if (needsExternalMedia) importedEffects.useAlternateMedia = false;
+      effectsRef.current = importedEffects;
+      setEffects(importedEffects);
+      altSourceRef.current = undefined;
+      frozenRef.current = false;
+      setAltMediaName(needsExternalMedia ? 'Re-select alternate media' : 'No alternate media');
+
+      setCarouselEnabled(project.carousel.enabled);
+      setCarouselInterval(project.carousel.intervalMs);
+      transitionTypeRef.current = project.carousel.transitionType;
+      transitionDurationRef.current = project.carousel.transitionDurationMs;
+      setTransitionType(project.carousel.transitionType);
+      setTransitionDuration(project.carousel.transitionDurationMs);
+
+      const track = motionRef.current.loadTrack(project.motion);
+      setMotionRecording(false);
+      setMotionPlaying(false);
+      setMotionFrames(track?.keyframes.length ?? 0);
+      setMotionDuration(track?.duration ?? 0);
+      setMotionProgress(0);
+
+      setProjectMessage(
+        needsExternalMedia
+          ? `Loaded ${file.name}. Project restored; choose the alternate image/video again.`
+          : `Loaded ${file.name}. Project state and motion track restored.`,
+      );
+    } catch (error) {
+      console.error(error);
+      setProjectMessage(error instanceof Error ? `Import failed: ${error.message}` : 'Import failed: invalid project file');
+    }
+  };
+
   const statusClass = status === 'ready' ? 'ok' : status === 'error' ? 'bad' : 'loading';
   const tutorialText = useMemo(() => [
     'Show your hand',
@@ -750,7 +833,15 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         )}
 
         {panel === 'settings' && (
-          <div className="telemetry-list"><Toggle label="Mirror front camera" checked={mirror} onChange={setMirror} /><Metric label="Render scale" value={`${Math.round(debug.renderScale * 100)}%`} /><Metric label="Render FPS" value={String(debug.fps)} /><Metric label="Tracking FPS" value={String(debug.trackingFps)} /><Metric label="Temporal history" value={`${Math.round(debug.historyMs)} ms`} /><Toggle label="Tracking debug" checked={debugVisible} onChange={setDebugVisible} /></div>
+          <div className="telemetry-list">
+            <Toggle label="Mirror front camera" checked={mirror} onChange={setMirror} />
+            <Metric label="Render scale" value={`${Math.round(debug.renderScale * 100)}%`} />
+            <Metric label="Render FPS" value={String(debug.fps)} />
+            <Metric label="Tracking FPS" value={String(debug.trackingFps)} />
+            <Metric label="Temporal history" value={`${Math.round(debug.historyMs)} ms`} />
+            <Toggle label="Tracking debug" checked={debugVisible} onChange={setDebugVisible} />
+            <ProjectControls message={projectMessage} onExport={exportProject} onImport={importProject} />
+          </div>
         )}
       </aside>
 
