@@ -90,7 +90,7 @@ export class MotionRecorder {
   }
 
   stop(now = performance.now()) {
-    if (!this.recording) return this.track;
+    if (!this.recording) return this.getTrack();
     this.recording = false;
     const duration = Math.max(0, now - this.recordStartedAt);
     if (this.working.length === 1) {
@@ -106,7 +106,7 @@ export class MotionRecorder {
       };
     }
     this.working = [];
-    return this.track;
+    return this.getTrack();
   }
 
   clear() {
@@ -127,7 +127,7 @@ export class MotionRecorder {
           keyframes: track.keyframes.map(cloneFrame),
         }
       : undefined;
-    return this.track;
+    return this.getTrack();
   }
 
   play(mode: PlaybackMode = 'loop', now = performance.now()) {
@@ -193,10 +193,10 @@ export class MotionRecorder {
     return elapsed % duration;
   }
 
-  sample(now = performance.now()): MotionKeyframe | undefined {
+  sampleAtTime(timeMs: number): MotionKeyframe | undefined {
     const track = this.track;
-    if (!track || !this.playing || track.keyframes.length < 2) return undefined;
-    const t = this.resolveTime(now);
+    if (!track || track.keyframes.length < 2) return undefined;
+    const t = Math.min(track.duration, Math.max(0, timeMs));
     const frames = track.keyframes;
     const right = frames.findIndex((frame) => frame.t >= t);
     if (right <= 0) return cloneFrame(frames[0]);
@@ -239,5 +239,10 @@ export class MotionRecorder {
       handSpeed: lerp(a.handSpeed, b.handSpeed, mix),
       interactionPoint: interactionPoint ? { ...interactionPoint } : undefined,
     };
+  }
+
+  sample(now = performance.now()): MotionKeyframe | undefined {
+    if (!this.track || !this.playing || this.track.keyframes.length < 2) return undefined;
+    return this.sampleAtTime(this.resolveTime(now));
   }
 }
