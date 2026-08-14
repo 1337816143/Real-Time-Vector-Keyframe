@@ -145,7 +145,6 @@ const fx = (
   temporalMode: 'none',
   temporalDelayMs: 900,
   temporalMix: 1,
-  effectStack: stack(['ripple', 'distortion', 'rgbSplit', 'pixelate'], []),
   ...partial,
   effectStack: partial.effectStack?.map((node) => ({ ...node })) ?? stack(['ripple', 'distortion', 'rgbSplit', 'pixelate'], []),
 });
