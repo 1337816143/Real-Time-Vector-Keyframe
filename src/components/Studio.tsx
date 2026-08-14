@@ -23,6 +23,7 @@ import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
 import { MotionRecorder } from '../engine/motion';
 import { VfxRenderer } from '../engine/renderer';
+import { VectorTrail } from '../engine/trail';
 import {
   DEFAULT_TRANSFORM,
   PRESETS,
@@ -34,10 +35,12 @@ import {
   type RenderState,
   type TemporalMode,
   type TrackingSnapshot,
+  type TrailReleaseMode,
 } from '../engine/types';
 
 const PRESET_ORDER: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
 const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
+const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
 
 const initialDebug: EngineDebug = {
   fps: 0,
@@ -155,6 +158,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const rendererRef = useRef<VfxRenderer>();
   const gestureRef = useRef(new GestureController(DEFAULT_TRANSFORM));
   const motionRef = useRef(new MotionRecorder());
+  const trailRef = useRef(new VectorTrail());
   const snapshotRef = useRef<TrackingSnapshot>();
   const animationRef = useRef<number>();
   const mediaRecorderRef = useRef<MediaRecorder>();
@@ -166,8 +170,6 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const mirrorRef = useRef(true);
   const maskTypeRef = useRef<MaskType>('portal');
   const effectsRef = useRef<EffectSettings>({ ...PRESETS.multiverse.effects });
-  const trailRef = useRef<Array<{ x: number; y: number; width: number }>>([]);
-  const lastTrailReleaseRef = useRef(0);
   const altSourceRef = useRef<TexImageSource>();
   const frozenRef = useRef(false);
 
@@ -193,6 +195,8 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [motionFrames, setMotionFrames] = useState(0);
   const [motionDuration, setMotionDuration] = useState(0);
   const [motionProgress, setMotionProgress] = useState(0);
+  const [trailReleaseMode, setTrailReleaseMode] = useState<TrailReleaseMode>('dissipate');
+  const [trailPoints, setTrailPoints] = useState(0);
 
   const applyPreset = useCallback((id: PresetId) => {
     const next = PRESETS[id];
@@ -202,7 +206,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     setPreset(id);
     setMaskType(next.mask);
     setEffects({ ...next.effects });
-    if (id === 'slash') trailRef.current = [];
+    if (id === 'slash') trailRef.current.begin();
     if (id !== 'freeze') frozenRef.current = false;
   }, []);
 
@@ -262,6 +266,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   useEffect(() => { maskTypeRef.current = maskType; }, [maskType]);
   useEffect(() => { effectsRef.current = effects; }, [effects]);
   useEffect(() => { presetRef.current = preset; }, [preset]);
+  useEffect(() => { trailRef.current.setReleaseMode(trailReleaseMode); }, [trailReleaseMode]);
 
   useEffect(() => {
     setMirror(facingMode === 'user');
@@ -278,13 +283,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     let fps = 60;
     let lastDebugUi = 0;
     let lowFpsSeconds = 0;
+    let lastMotionProgress = 0;
     let lastLiveState: RenderState = {
       maskType: maskTypeRef.current,
       transform: { ...DEFAULT_TRANSFORM },
       effects: { ...effectsRef.current },
       gestureState: 'IDLE',
       handSpeed: 0,
-      trail: trailRef.current,
+      trail: trailRef.current.render(),
       time: performance.now(),
     };
 
@@ -335,16 +341,9 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
         if (!motionRef.current.isPlaying() && gesture.swipe) cyclePreset(gesture.swipe);
         if (gesture.pinchStarted && presetRef.current === 'freeze') captureFreeze();
-        if (gesture.pinchStarted && maskTypeRef.current === 'trail') trailRef.current = [];
-        if (gesture.trailPoint && maskTypeRef.current === 'trail') {
-          const trail = trailRef.current;
-          const previous = trail[trail.length - 1];
-          if (!previous || Math.hypot(previous.x - gesture.trailPoint.x, previous.y - gesture.trailPoint.y) > 0.012) {
-            trail.push(gesture.trailPoint);
-            if (trail.length > 48) trail.shift();
-          }
-        }
-        if (gesture.released && maskTypeRef.current === 'trail') lastTrailReleaseRef.current = now;
+        if (!motionRef.current.isPlaying() && gesture.pinchStarted && maskTypeRef.current === 'trail') trailRef.current.begin();
+        if (!motionRef.current.isPlaying() && gesture.trailPoint && maskTypeRef.current === 'trail') trailRef.current.add(gesture.trailPoint, now);
+        if (!motionRef.current.isPlaying() && gesture.released && maskTypeRef.current === 'trail') trailRef.current.release(now);
         if (presetRef.current === 'freeze') altSourceRef.current = frozenRef.current ? freezeCanvasRef.current : video;
 
         const baseEffects = effectsRef.current;
@@ -358,7 +357,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           },
           gestureState: gesture.state,
           handSpeed: gesture.handSpeed,
-          trail: trailRef.current,
+          trail: trailRef.current.render(now),
           hoverPoint: gesture.hoverPoint,
           time: now,
         };
@@ -372,19 +371,25 @@ export default function Studio({ onExit }: { onExit: () => void }) {
             rgbSplit: baseEffects.rgbSplit * (1 + Math.min(2.2, lastLiveState.handSpeed * 0.8)),
             distortion: baseEffects.distortion * (1 + Math.min(2.5, lastLiveState.handSpeed)),
           },
-          trail: trailRef.current,
+          trail: trailRef.current.render(now),
           time: now,
         };
-      }
-
-      if (maskTypeRef.current === 'trail' && lastTrailReleaseRef.current && now - lastTrailReleaseRef.current > 1200 && trailRef.current.length > 1) {
-        trailRef.current.shift();
       }
 
       motionRef.current.capture(lastLiveState, now);
       let renderState = lastLiveState;
       const playbackFrame = motionRef.current.sample(now);
       if (playbackFrame) {
+        const progress = motionRef.current.getProgress(now);
+        const wrapped = motionRef.current.isPlaying() && progress + 0.04 < lastMotionProgress;
+        if (wrapped && playbackFrame.maskType === 'trail') trailRef.current.begin();
+        lastMotionProgress = progress;
+        if (playbackFrame.maskType === 'trail' && playbackFrame.interactionPoint && ['PINCH_START', 'GRABBED', 'DRAGGING'].includes(playbackFrame.gestureState)) {
+          trailRef.current.add({
+            ...playbackFrame.interactionPoint,
+            width: Math.min(0.085, 0.022 + playbackFrame.handSpeed * 0.055),
+          }, now);
+        }
         renderState = {
           ...lastLiveState,
           maskType: playbackFrame.maskType,
@@ -392,10 +397,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
           effects: { ...playbackFrame.effects },
           gestureState: playbackFrame.gestureState,
           handSpeed: playbackFrame.handSpeed,
-          hoverPoint: undefined,
+          trail: playbackFrame.maskType === 'trail' ? trailRef.current.render(now) : lastLiveState.trail,
+          hoverPoint: playbackFrame.interactionPoint,
           time: now,
         };
-        if (!motionRef.current.isPlaying()) gestureRef.current.setTransform(playbackFrame.transform);
+        if (!motionRef.current.isPlaying()) {
+          gestureRef.current.setTransform(playbackFrame.transform);
+          if (playbackFrame.maskType === 'trail') trailRef.current.release(now);
+        }
       }
 
       let alternate: TexImageSource | undefined = altSourceRef.current;
@@ -439,6 +448,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         setMotionFrames(track?.keyframes.length ?? 0);
         setMotionDuration(track?.duration ?? 0);
         setMotionProgress(motionRef.current.getProgress(now));
+        setTrailPoints(trailRef.current.getPointCount());
         lastDebugUi = now;
       }
 
@@ -527,6 +537,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
   const playMotion = (mode: PlaybackMode) => {
     setMotionMode(mode);
+    trailRef.current.clear();
     if (motionRef.current.play(mode)) setMotionPlaying(true);
   };
 
@@ -534,6 +545,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     const frame = motionRef.current.sample();
     motionRef.current.stopPlayback();
     if (frame) gestureRef.current.setTransform(frame.transform);
+    if (frame?.maskType === 'trail') trailRef.current.release();
     setMotionPlaying(false);
   };
 
@@ -548,7 +560,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
   const resetMask = () => {
     gestureRef.current.setTransform(DEFAULT_TRANSFORM);
-    trailRef.current = [];
+    trailRef.current.clear();
   };
 
   const statusClass = status === 'ready' ? 'ok' : status === 'error' ? 'bad' : 'loading';
@@ -629,8 +641,15 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         {panel === 'mask' && (
           <>
             <div className="segmented-grid">{(['circle', 'blob', 'portal', 'trail'] as MaskType[]).map((type) => <button key={type} className={maskType === type ? 'selected' : ''} onClick={() => setMaskType(type)}>{type}</button>)}</div>
+            {maskType === 'trail' && (
+              <>
+                <span className="eyebrow">TRAIL RELEASE</span>
+                <div className="segmented-grid">{TRAIL_MODES.map((mode) => <button key={mode} className={trailReleaseMode === mode ? 'selected' : ''} onClick={() => setTrailReleaseMode(mode)}>{mode}</button>)}</div>
+                <Metric label="Raw trail points" value={String(trailPoints)} />
+              </>
+            )}
             <button className="secondary-button" onClick={resetMask}><RotateCcw size={16} /> Reset transform</button>
-            <p className="panel-note">Pinch near the mask to grab it. With two hands visible, keep pinching and change hand distance/angle to scale and rotate.</p>
+            <p className="panel-note">Vector Trail is smoothed before rendering. Release behavior can hold the crack, dissipate it, close from both ends, expand, burst outward, or shrink its width to zero.</p>
           </>
         )}
 
@@ -658,7 +677,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
                 <button className="secondary-button" onClick={clearMotion}><Trash2 size={16} /> Clear motion</button>
               </>
             )}
-            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect and gesture-state changes. Playback interpolates position, scale, rotation and effect parameters instead of replaying raw frame-by-frame coordinates.</p>
+            <p className="panel-note">Motion capture automatically creates sparse keyframes from transform, effect, gesture-state and interaction-point changes. Vector Slash replay rebuilds its path from the recorded hand interaction points.</p>
           </div>
         )}
 
@@ -678,7 +697,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       {!panelOpen && <button className="panel-reopen glass-panel" onClick={() => setPanelOpen(true)}><Settings2 size={18} /><span>Controls</span></button>}
 
       {debugVisible && (
-        <div className="debug-hud glass-panel"><div><span>RENDER</span><b>{debug.fps} FPS</b></div><div><span>TRACK</span><b>{debug.trackingFps} FPS</b></div><div><span>STATE</span><b>{debug.state}</b></div><div><span>PINCH</span><b>{debug.pinchDistance.toFixed(2)}</b></div><div><span>VELOCITY</span><b>{debug.handSpeed.toFixed(2)}</b></div><div><span>HISTORY</span><b>{Math.round(debug.historyMs)}ms</b></div><div><span>MASK</span><b>{debug.mask.x.toFixed(2)}, {debug.mask.y.toFixed(2)}</b></div></div>
+        <div className="debug-hud glass-panel"><div><span>RENDER</span><b>{debug.fps} FPS</b></div><div><span>TRACK</span><b>{debug.trackingFps} FPS</b></div><div><span>STATE</span><b>{debug.state}</b></div><div><span>PINCH</span><b>{debug.pinchDistance.toFixed(2)}</b></div><div><span>VELOCITY</span><b>{debug.handSpeed.toFixed(2)}</b></div><div><span>HISTORY</span><b>{Math.round(debug.historyMs)}ms</b></div><div><span>TRAIL</span><b>{trailPoints}</b></div><div><span>MASK</span><b>{debug.mask.x.toFixed(2)}, {debug.mask.y.toFixed(2)}</b></div></div>
       )}
 
       <nav className="studio-dock glass-panel" aria-label="Studio controls">
