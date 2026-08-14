@@ -11,7 +11,9 @@ export type GestureState =
   | 'LOST';
 
 export type MaskType = 'circle' | 'blob' | 'portal' | 'trail';
-export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'freeze' | 'slash';
+export type TemporalMode = 'none' | 'timeWindow' | 'echo' | 'afterImage';
+export type PlaybackMode = 'once' | 'loop' | 'reverse' | 'pingpong';
+export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 'slash';
 
 export interface Vec2 {
   x: number;
@@ -52,6 +54,9 @@ export interface EffectSettings {
   glow: number;
   invertMask: boolean;
   useAlternateMedia: boolean;
+  temporalMode: TemporalMode;
+  temporalDelayMs: number;
+  temporalMix: number;
 }
 
 export interface EngineDebug {
@@ -63,6 +68,7 @@ export interface EngineDebug {
   mask: MaskTransform;
   hands: number;
   renderScale: number;
+  historyMs: number;
 }
 
 export interface RenderState {
@@ -76,6 +82,21 @@ export interface RenderState {
   time: number;
 }
 
+export interface MotionKeyframe {
+  t: number;
+  maskType: MaskType;
+  transform: MaskTransform;
+  effects: EffectSettings;
+  gestureState: GestureState;
+  handSpeed: number;
+}
+
+export interface MotionTrack {
+  version: 1;
+  duration: number;
+  keyframes: MotionKeyframe[];
+}
+
 export const DEFAULT_TRANSFORM: MaskTransform = {
   x: 0.5,
   y: 0.5,
@@ -83,30 +104,51 @@ export const DEFAULT_TRANSFORM: MaskTransform = {
   rotation: 0,
 };
 
+const fx = (
+  partial: Partial<EffectSettings> = {},
+): EffectSettings => ({
+  rgbSplit: 0,
+  ripple: 0,
+  pixelate: 0,
+  distortion: 0,
+  glow: 0.8,
+  invertMask: false,
+  useAlternateMedia: false,
+  temporalMode: 'none',
+  temporalDelayMs: 900,
+  temporalMix: 1,
+  ...partial,
+});
+
 export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects: EffectSettings }> = {
   multiverse: {
     label: 'Multiverse Portal',
     mask: 'portal',
-    effects: { rgbSplit: 0.006, ripple: 0.018, pixelate: 0, distortion: 0.012, glow: 1, invertMask: false, useAlternateMedia: true },
+    effects: fx({ rgbSplit: 0.006, ripple: 0.018, distortion: 0.012, glow: 1, useAlternateMedia: true }),
   },
   cyber: {
     label: 'Cyber Reality',
     mask: 'blob',
-    effects: { rgbSplit: 0.018, ripple: 0.006, pixelate: 72, distortion: 0.02, glow: 0.85, invertMask: false, useAlternateMedia: false },
+    effects: fx({ rgbSplit: 0.018, ripple: 0.006, pixelate: 72, distortion: 0.02, glow: 0.85 }),
   },
   dream: {
     label: 'Dream Window',
     mask: 'blob',
-    effects: { rgbSplit: 0.004, ripple: 0.035, pixelate: 0, distortion: 0.008, glow: 0.55, invertMask: false, useAlternateMedia: false },
+    effects: fx({ rgbSplit: 0.004, ripple: 0.035, distortion: 0.008, glow: 0.55, temporalMode: 'afterImage', temporalDelayMs: 420, temporalMix: 0.32 }),
+  },
+  time: {
+    label: 'Time Window',
+    mask: 'portal',
+    effects: fx({ glow: 0.92, ripple: 0.008, temporalMode: 'timeWindow', temporalDelayMs: 1100, temporalMix: 1 }),
   },
   freeze: {
     label: 'Freeze World',
     mask: 'circle',
-    effects: { rgbSplit: 0, ripple: 0, pixelate: 0, distortion: 0, glow: 0.9, invertMask: true, useAlternateMedia: true },
+    effects: fx({ glow: 0.9, invertMask: true, useAlternateMedia: true }),
   },
   slash: {
     label: 'Vector Slash',
     mask: 'trail',
-    effects: { rgbSplit: 0.012, ripple: 0.01, pixelate: 0, distortion: 0.024, glow: 1.2, invertMask: false, useAlternateMedia: true },
+    effects: fx({ rgbSplit: 0.012, ripple: 0.01, distortion: 0.024, glow: 1.2, useAlternateMedia: true }),
   },
 };
