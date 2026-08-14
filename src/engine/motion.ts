@@ -116,6 +116,20 @@ export class MotionRecorder {
     this.track = undefined;
   }
 
+  loadTrack(track?: MotionTrack) {
+    this.recording = false;
+    this.playing = false;
+    this.working = [];
+    this.track = track
+      ? {
+          version: 1,
+          duration: Math.max(0, track.duration),
+          keyframes: track.keyframes.map(cloneFrame),
+        }
+      : undefined;
+    return this.track;
+  }
+
   play(mode: PlaybackMode = 'loop', now = performance.now()) {
     if (!this.track || this.track.keyframes.length < 2) return false;
     this.recording = false;
@@ -138,7 +152,13 @@ export class MotionRecorder {
   }
 
   getTrack() {
-    return this.track;
+    return this.track
+      ? {
+          version: 1 as const,
+          duration: this.track.duration,
+          keyframes: this.track.keyframes.map(cloneFrame),
+        }
+      : undefined;
   }
 
   getProgress(now = performance.now()) {
