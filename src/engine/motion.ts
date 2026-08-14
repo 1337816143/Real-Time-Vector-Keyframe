@@ -15,6 +15,7 @@ function cloneFrame(frame: MotionKeyframe): MotionKeyframe {
     ...frame,
     transform: { ...frame.transform },
     effects: cloneEffects(frame.effects),
+    interactionPoint: frame.interactionPoint ? { ...frame.interactionPoint } : undefined,
   };
 }
 
@@ -31,6 +32,9 @@ function angleLerp(a: number, b: number, t: number) {
 
 function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
   const position = Math.hypot(a.transform.x - b.transform.x, a.transform.y - b.transform.y);
+  const interaction = a.interactionPoint && b.interactionPoint
+    ? Math.hypot(a.interactionPoint.x - b.interactionPoint.x, a.interactionPoint.y - b.interactionPoint.y)
+    : a.interactionPoint === b.interactionPoint ? 0 : 1;
   const scale = Math.abs(a.transform.scale - b.transform.scale);
   const rotation = Math.abs(a.transform.rotation - b.transform.rotation);
   const effectDelta =
@@ -39,7 +43,7 @@ function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
     Math.abs(a.effects.distortion - b.effects.distortion) +
     Math.abs(a.effects.glow - b.effects.glow) * 0.02 +
     Math.abs(a.effects.temporalMix - b.effects.temporalMix) * 0.02;
-  return position > 0.004 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || a.gestureState !== b.gestureState;
+  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || a.gestureState !== b.gestureState;
 }
 
 export class MotionRecorder {
@@ -71,6 +75,7 @@ export class MotionRecorder {
       effects: cloneEffects(state.effects),
       gestureState: state.gestureState,
       handSpeed: state.handSpeed,
+      interactionPoint: state.hoverPoint ? { ...state.hoverPoint } : undefined,
     };
     const previous = this.working[this.working.length - 1];
     const elapsed = now - this.lastCaptureAt;
@@ -169,13 +174,19 @@ export class MotionRecorder {
     if (!track || !this.playing || track.keyframes.length < 2) return undefined;
     const t = this.resolveTime(now);
     const frames = track.keyframes;
-    let right = frames.findIndex((frame) => frame.t >= t);
+    const right = frames.findIndex((frame) => frame.t >= t);
     if (right <= 0) return cloneFrame(frames[0]);
     if (right < 0) return cloneFrame(frames[frames.length - 1]);
     const a = frames[right - 1];
     const b = frames[right];
     const span = Math.max(1, b.t - a.t);
     const mix = Math.min(1, Math.max(0, (t - a.t) / span));
+    const interactionPoint = a.interactionPoint && b.interactionPoint
+      ? {
+          x: lerp(a.interactionPoint.x, b.interactionPoint.x, mix),
+          y: lerp(a.interactionPoint.y, b.interactionPoint.y, mix),
+        }
+      : mix < 0.5 ? a.interactionPoint : b.interactionPoint;
 
     return {
       t,
@@ -200,6 +211,7 @@ export class MotionRecorder {
       },
       gestureState: mix < 0.5 ? a.gestureState : b.gestureState,
       handSpeed: lerp(a.handSpeed, b.handSpeed, mix),
+      interactionPoint: interactionPoint ? { ...interactionPoint } : undefined,
     };
   }
 }
