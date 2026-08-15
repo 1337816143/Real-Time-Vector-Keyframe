@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowRight, CircleDot, Hand, ShieldCheck, Sparkles, Video } from 'lucide-react';
 import CustomMaskOverlay from './components/CustomMaskOverlay';
+import ScenePanel from './components/ScenePanel';
 import Studio from './components/Studio';
 
 export default function App() {
@@ -9,6 +10,7 @@ export default function App() {
     return (
       <>
         <Studio onExit={() => setEntered(false)} />
+        <ScenePanel />
         <CustomMaskOverlay />
       </>
     );
@@ -48,7 +50,7 @@ export default function App() {
 
       <footer className="landing-footer">
         <span>WEBGL2 / MEDIAPIPE / LOCAL-FIRST</span>
-        <span>v0.4 VECTOR MASK EDITOR</span>
+        <span>v0.5 MULTI-MASK SCENE</span>
       </footer>
     </main>
   );
