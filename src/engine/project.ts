@@ -1,5 +1,5 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
-import { getBezierMaskState, setBezierCurve, setCustomMaskEnabled } from './bezierStore';
+import { getBezierMaskState, setBezierMaskState } from './bezierStore';
 import {
   PRESETS,
   type BezierCurve,
@@ -26,6 +26,8 @@ export interface ProjectSnapshot {
     transform: MaskTransform;
     trailReleaseMode: TrailReleaseMode;
     customCurve: BezierCurve;
+    customFeather: number;
+    customExpansion: number;
   };
   effects: EffectSettings;
   carousel: {
@@ -38,7 +40,11 @@ export interface ProjectSnapshot {
 }
 
 type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask'> & {
-  mask: Omit<ProjectSnapshot['mask'], 'customCurve'> & { customCurve?: BezierCurve };
+  mask: Omit<ProjectSnapshot['mask'], 'customCurve' | 'customFeather' | 'customExpansion'> & {
+    customCurve?: BezierCurve;
+    customFeather?: number;
+    customExpansion?: number;
+  };
 };
 
 const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
@@ -193,6 +199,8 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
       type: bezierState.enabled ? 'custom' : input.mask.type,
       transform: { ...input.mask.transform },
       customCurve: cloneCurve(customCurve),
+      customFeather: clamp(input.mask.customFeather ?? bezierState.feather, 0, 0.08),
+      customExpansion: clamp(input.mask.customExpansion ?? bezierState.expansion, -0.45, 0.45),
     },
     effects: {
       ...input.effects,
@@ -227,8 +235,14 @@ export function parseProject(text: string): ProjectSnapshot {
   const preset = typeof root.preset === 'string' && root.preset in PRESETS ? root.preset as PresetId : presetFallback;
   const maskType = enumValue(mask.type, MASK_TYPES, PRESETS[preset].mask);
   const customCurve = sanitizeCurve(mask.customCurve);
-  setBezierCurve(customCurve);
-  setCustomMaskEnabled(maskType === 'custom');
+  const customFeather = clamp(finite(mask.customFeather, 0.006), 0, 0.08);
+  const customExpansion = clamp(finite(mask.customExpansion, 0), -0.45, 0.45);
+  setBezierMaskState({
+    curve: customCurve,
+    enabled: maskType === 'custom',
+    feather: customFeather,
+    expansion: customExpansion,
+  });
 
   return {
     version: 1,
@@ -239,6 +253,8 @@ export function parseProject(text: string): ProjectSnapshot {
       transform: sanitizeTransform(mask.transform),
       trailReleaseMode: enumValue(mask.trailReleaseMode, TRAIL_MODES, 'dissipate'),
       customCurve,
+      customFeather,
+      customExpansion,
     },
     effects: sanitizeEffects(root.effects),
     carousel: {
