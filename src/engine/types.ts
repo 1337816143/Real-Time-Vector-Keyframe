@@ -17,6 +17,7 @@ export type TrailReleaseMode = 'hold' | 'dissipate' | 'close' | 'expand' | 'burs
 export type EffectTransitionType = 'crossFade' | 'directionalWipe' | 'glitch' | 'flash' | 'liquid';
 export type EffectNodeType = 'rgbSplit' | 'ripple' | 'pixelate' | 'distortion';
 export type EffectBlendMode = 'normal' | 'add' | 'screen' | 'multiply';
+export type EdgeFxMode = 'none' | 'neon' | 'scanner' | 'electric' | 'particle';
 export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 'slash';
 
 export interface Vec2 {
@@ -79,6 +80,9 @@ export interface EffectSettings {
   pixelate: number;
   distortion: number;
   glow: number;
+  edgeFxMode?: EdgeFxMode;
+  edgeFxSpeed?: number;
+  edgeFxDensity?: number;
   invertMask: boolean;
   useAlternateMedia: boolean;
   temporalMode: TemporalMode;
@@ -158,6 +162,9 @@ const fx = (
   pixelate: 0,
   distortion: 0,
   glow: 0.8,
+  edgeFxMode: 'neon',
+  edgeFxSpeed: 1,
+  edgeFxDensity: 1,
   invertMask: false,
   useAlternateMedia: false,
   temporalMode: 'none',
@@ -176,6 +183,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
       ripple: 0.018,
       distortion: 0.012,
       glow: 1,
+      edgeFxMode: 'neon',
+      edgeFxSpeed: 1,
+      edgeFxDensity: 1,
       useAlternateMedia: true,
       effectStack: stack(['ripple', 'distortion', 'rgbSplit', 'pixelate'], ['ripple', 'distortion', 'rgbSplit']),
     }),
@@ -189,6 +199,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
       pixelate: 72,
       distortion: 0.02,
       glow: 0.85,
+      edgeFxMode: 'scanner',
+      edgeFxSpeed: 1.35,
+      edgeFxDensity: 1,
       effectStack: stack(['pixelate', 'rgbSplit', 'distortion', 'ripple'], ['pixelate', 'rgbSplit', 'distortion']),
     }),
   },
@@ -200,6 +213,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
       ripple: 0.035,
       distortion: 0.008,
       glow: 0.55,
+      edgeFxMode: 'particle',
+      edgeFxSpeed: 0.72,
+      edgeFxDensity: 1.25,
       temporalMode: 'afterImage',
       temporalDelayMs: 420,
       temporalMix: 0.32,
@@ -211,6 +227,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
     mask: 'portal',
     effects: fx({
       glow: 0.92,
+      edgeFxMode: 'scanner',
+      edgeFxSpeed: 0.8,
+      edgeFxDensity: 0.9,
       ripple: 0.008,
       temporalMode: 'timeWindow',
       temporalDelayMs: 1100,
@@ -223,6 +242,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
     mask: 'circle',
     effects: fx({
       glow: 0.9,
+      edgeFxMode: 'neon',
+      edgeFxSpeed: 0.6,
+      edgeFxDensity: 0.85,
       invertMask: true,
       useAlternateMedia: true,
       effectStack: stack(['rgbSplit', 'ripple', 'distortion', 'pixelate'], []),
@@ -236,6 +258,9 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
       ripple: 0.01,
       distortion: 0.024,
       glow: 1.2,
+      edgeFxMode: 'electric',
+      edgeFxSpeed: 1.8,
+      edgeFxDensity: 1.4,
       useAlternateMedia: true,
       effectStack: stack(['distortion', 'rgbSplit', 'ripple', 'pixelate'], ['distortion', 'rgbSplit', 'ripple']),
     }),
