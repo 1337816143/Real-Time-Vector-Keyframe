@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import BezierMaskEditor from './BezierMaskEditor';
 import EffectStackEditor from './EffectStackEditor';
+import SceneMotionControls from './SceneMotionControls';
 import './ScenePanel.css';
 import {
   addMask,
@@ -151,6 +152,8 @@ export default function ScenePanel() {
               )}
             </section>
           )}
+
+          <SceneMotionControls />
 
           <p className="panel-note">Scene order runs from bottom to top. Every visible node gets its own Source → Effect Stack → Mask Composite GPU passes. Select a node, then use the same pinch / two-hand gestures to move, scale and rotate it.</p>
         </div>
