@@ -13,6 +13,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import BezierMaskEditor from './BezierMaskEditor';
+import EffectSequenceEditor from './EffectSequenceEditor';
 import EffectStackEditor from './EffectStackEditor';
 import SceneMotionControls from './SceneMotionControls';
 import './ScenePanel.css';
@@ -29,6 +30,7 @@ import {
   subscribeScene,
   updateMask,
 } from '../engine/sceneStore';
+import { sceneMotionRecorder } from '../engine/sceneMotion';
 import { PRESETS, type PresetId } from '../engine/types';
 
 const EFFECT_PRESETS: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
@@ -36,7 +38,9 @@ const EFFECT_PRESETS: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'fre
 export default function ScenePanel() {
   const state = useSyncExternalStore(subscribeScene, getSceneState, getSceneState);
   const [open, setOpen] = useState(false);
+  const [motionBusy, setMotionBusy] = useState(false);
   const selected = state.scene.nodes.find((node) => node.id === state.scene.selectedMaskId);
+  const topologyLocked = motionBusy || sceneMotionRecorder.isRecording() || sceneMotionRecorder.isPlaying();
 
   return (
     <aside className={`scene-panel glass-panel ${open ? 'open' : ''}`}>
@@ -44,6 +48,7 @@ export default function ScenePanel() {
         <button
           type="button"
           className={`scene-enable ${state.enabled ? 'active' : ''}`}
+          disabled={topologyLocked && state.enabled}
           onClick={() => setSceneEnabled(!state.enabled)}
         >
           <Layers3 size={16} />
@@ -63,7 +68,7 @@ export default function ScenePanel() {
           <div className="scene-add-row">
             <span>Add</span>
             {(['circle', 'blob', 'portal', 'custom'] as const).map((kind) => (
-              <button key={kind} type="button" disabled={state.scene.nodes.length >= 4} onClick={() => addMask(kind)}>
+              <button key={kind} type="button" disabled={topologyLocked || state.scene.nodes.length >= 4} onClick={() => addMask(kind)}>
                 <Plus size={11} /> {kind}
               </button>
             ))}
@@ -84,9 +89,9 @@ export default function ScenePanel() {
                   <div className="scene-node-actions">
                     <button type="button" title={node.visible ? 'Hide mask' : 'Show mask'} onClick={() => updateMask(node.id, { visible: !node.visible })}>{node.visible ? <Eye size={13} /> : <EyeOff size={13} />}</button>
                     <button type="button" title={node.locked ? 'Unlock gesture transform' : 'Lock gesture transform'} onClick={() => updateMask(node.id, { locked: !node.locked })}>{node.locked ? <Lock size={13} /> : <Unlock size={13} />}</button>
-                    <button type="button" title="Move down" disabled={index === 0} onClick={() => moveMask(node.id, -1)}><ArrowDown size={13} /></button>
-                    <button type="button" title="Move up" disabled={index === state.scene.nodes.length - 1} onClick={() => moveMask(node.id, 1)}><ArrowUp size={13} /></button>
-                    <button type="button" title="Delete mask" disabled={state.scene.nodes.length <= 1} onClick={() => removeMask(node.id)}><Trash2 size={13} /></button>
+                    <button type="button" title="Move down" disabled={topologyLocked || index === 0} onClick={() => moveMask(node.id, -1)}><ArrowDown size={13} /></button>
+                    <button type="button" title="Move up" disabled={topologyLocked || index === state.scene.nodes.length - 1} onClick={() => moveMask(node.id, 1)}><ArrowUp size={13} /></button>
+                    <button type="button" title="Delete mask" disabled={topologyLocked || state.scene.nodes.length <= 1} onClick={() => removeMask(node.id)}><Trash2 size={13} /></button>
                   </div>
                 </div>
               );
@@ -153,9 +158,10 @@ export default function ScenePanel() {
             </section>
           )}
 
-          <SceneMotionControls />
+          <SceneMotionControls onBusyChange={setMotionBusy} />
+          <EffectSequenceEditor />
 
-          <p className="panel-note">Scene order runs from bottom to top. Every visible node gets its own Source → Effect Stack → Mask Composite GPU passes. Select a node, then use the same pinch / two-hand gestures to move, scale and rotate it.</p>
+          <p className="panel-note">Scene order runs from bottom to top. Every visible node gets its own Source → Effect Stack → Mask Composite GPU passes. Scene Motion locks structural edits while recording/playback; Effect Sequence overlays render-only Effects without rewriting motion keys.</p>
         </div>
       )}
     </aside>
