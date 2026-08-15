@@ -4,13 +4,13 @@ A browser-based realtime VFX studio where hand landmarks manipulate GPU-composit
 
 Core interaction:
 
-**camera → hand tracking → gesture state machine → vector / Bezier masks → per-mask GPU effect graph → temporal/motion system → recording**
+**camera → hand tracking → gesture state machine → vector / Bezier masks → per-mask GPU effect graph → temporal + multi-lane motion → recording**
 
-## Current baseline — v0.5 Multi-Mask Scene
+## Current baseline — v0.6 Scene Motion
 
-The project now supports both a lightweight single-mask workflow and a real ordered multi-mask GPU scene. Multi-Mask is not a UI-only layer list: every visible mask receives its own source/effect/composite passes and is composited over the previous scene result.
+The project now supports both a lightweight single-mask workflow and an ordered multi-mask GPU scene with identity-preserving motion lanes. Multi-Mask is not a UI-only layer list: every visible mask receives its own source/effect/composite passes and is composited over the previous scene result. Scene Motion records each mask by stable `maskId` rather than flattening the scene into one uneditable animation.
 
-### Camera + gesture interaction
+## Camera + gesture interaction
 
 - Browser camera capture with front/back camera switching.
 - Mirrored front-camera mode and aspect-correct cover mapping.
@@ -21,7 +21,9 @@ The project now supports both a lightweight single-mask workflow and a real orde
 - Velocity-aware drag smoothing.
 - Two-hand position / scale / rotation.
 - Swipe preset switching in the single-mask workflow.
-- In Scene mode the selected, unlocked mask reuses the same GestureController, so pinch / drag / two-hand transform manipulates that node rather than introducing a second gesture system.
+- In Scene mode the selected, unlocked mask reuses the same `GestureController`.
+- Only the selected Scene mask receives live Hover / velocity / gesture-reactive VFX; unselected masks remain visually stable.
+- During Scene Motion playback, live gesture transforms are suspended so playback and the user's hand do not fight over the same transform.
 
 ## GPU masks
 
@@ -84,7 +86,7 @@ A Bezier curve is sampled to at most 64 boundary points for realtime rendering. 
 
 Expansion and Feather are therefore not CSS blur/scale substitutes. Edge glow follows the shifted signed-distance boundary as well.
 
-## v0.5 Multi-Mask Scene Graph
+## Multi-Mask Scene Graph
 
 Scene mode currently supports up to four mask nodes so mobile GPU cost remains bounded while the architecture is proven.
 
@@ -105,6 +107,7 @@ Scene controls:
 - enable / disable Scene mode;
 - select active mask;
 - add Circle / Blob / Portal / Custom masks;
+- new masks spawn at staggered positions rather than directly overlapping at center;
 - delete masks while keeping at least one node;
 - show / hide nodes while keeping at least one visible layer;
 - lock / unlock gesture transform;
@@ -142,6 +145,74 @@ Last Mask Composite → final canvas
 The existing effect ping-pong targets are separate from the scene accumulation render targets. Scene composition is therefore not implemented as DOM opacity layers or multiple HTML canvases.
 
 The final result still lands on the same WebGL canvas used by `MediaRecorder`, so Multi-Mask output is included in recordings.
+
+## v0.6 Scene Motion
+
+Scene Motion adds a second motion system specifically for multi-mask scenes. It is separate from the legacy single-mask `MotionRecorder` so older projects and workflows remain valid.
+
+### Identity-preserving lanes
+
+Each mask owns one lane identified by stable `maskId`.
+
+Recorded per lane:
+
+- position;
+- scale;
+- rotation;
+- visibility / lock state;
+- RGB Split / Ripple / Pixelate / Distortion / Glow;
+- Temporal mode / delay / mix;
+- Effect Stack order and node state;
+- Effect node intensity / opacity / blend mode;
+- geometry kind;
+- Custom Bezier anchors;
+- Custom incoming / outgoing handles;
+- linked/free handle state;
+- Custom Feather;
+- Custom Expansion.
+
+The recorder automatically emits sparse keyframes only when a node changes meaningfully, plus periodic safety keys so timing is preserved through static sections.
+
+### Interpolation
+
+During Scene Motion playback:
+
+- position / scale interpolate numerically;
+- rotation uses shortest-path angular interpolation;
+- numeric Effect parameters interpolate;
+- compatible Effect Stack nodes interpolate Intensity / Opacity while discrete state switches at the nearest side;
+- Custom Feather / Expansion interpolate;
+- Custom Bezier anchors and handles interpolate when both keyframes have matching anchor IDs/topology;
+- if the user added/deleted anchors between keyframes, topology switches safely at the nearest keyframe rather than force-matching unrelated points.
+
+### Playback + timeline
+
+Scene Motion supports:
+
+- Once
+- Loop
+- Reverse
+- Ping Pong
+- multi-lane visual timeline
+- per-lane keyframe markers
+- shared playhead
+- click / drag Scrub preview
+- duration / keyframe telemetry
+
+Scrubbing evaluates the same lane sampling/interpolation logic used by playback.
+
+### Topology protection
+
+While Scene Motion is recording or playing, Scene structure is intentionally treated as fixed:
+
+- Add Mask is disabled.
+- Delete Mask is disabled.
+- Layer reorder is disabled.
+- Scene-mode disable is blocked.
+
+Authored/keyframeable properties such as transforms, Effects and Custom geometry remain editable during recording.
+
+This prevents `maskId` lanes from being invalidated by mid-record structural edits.
 
 ## Temporal VFX
 
@@ -192,7 +263,7 @@ Transitions:
 
 The same transition system is used for manual preset changes, swipe changes and automatic Carousel playback.
 
-Scene mode currently prioritizes deterministic ordered multi-mask compositing and does not yet run independent transition timelines for each scene node.
+Scene mode currently prioritizes deterministic ordered multi-mask compositing and does not yet run independent transition timelines for each Scene node.
 
 ## Vector Trail lifecycle
 
@@ -215,9 +286,9 @@ Release modes:
 - Burst
 - Shrink
 
-## Motion Recording + automatic keyframes
+## Single-mask Motion Recording
 
-The existing single-mask Motion system records transform, mask type, Effect settings/stack, Temporal settings, gesture state, velocity and interaction point.
+The original single-mask Motion system remains available and records transform, mask type, Effect settings/stack, Temporal settings, gesture state, velocity and interaction point.
 
 Playback:
 
@@ -228,13 +299,11 @@ Playback:
 
 A scrubbable timeline evaluates the same interpolation path as playback.
 
-**Scene-wide multi-mask keyframing is not claimed as complete yet.** Scene nodes render and respond to live gesture selection, but recording simultaneous independent node timelines is a later milestone.
-
 ## Project JSON
 
-Project import/export remains schema version 1 and is backward-compatible with older v0.3/v0.4 files.
+Project import/export remains schema version 1 and is backward-compatible with older v0.3/v0.4/v0.5 files.
 
-It now stores:
+It stores:
 
 - single-mask preset/type/transform;
 - Vector Trail release mode;
@@ -243,17 +312,28 @@ It now stores:
 - ordered Effect Stack;
 - Temporal settings;
 - Carousel / transition settings;
-- Motion Track / keyframes;
-- **optional Multi-Mask Scene Graph**;
+- single-mask Motion Track / keyframes;
+- optional Multi-Mask Scene Graph;
 - Scene enabled state;
 - node ordering / selection;
 - per-node visibility / lock;
 - per-node transform;
 - per-node geometry;
 - per-node Effects / Effect Stack;
-- per-node Custom Bezier / Feather / Expansion.
+- per-node Custom Bezier / Feather / Expansion;
+- **Scene Motion template Scene**;
+- **Scene Motion lanes keyed by `maskId`**;
+- **Scene Motion keyframes**.
 
-Files without `customCurve`, Feather/Expansion or `scene` fields receive safe defaults. Imported scenes are validated, capped to four nodes and repaired to keep at least one visible layer.
+Imported Scene Motion is locally validated and bounded:
+
+- maximum four lanes;
+- lane IDs must match the saved template Scene;
+- per-lane keyframe count is capped;
+- transforms / Effects / Bezier values are range-sanitized;
+- invalid lanes are dropped rather than guessed.
+
+Files without Custom geometry, Scene Graph or Scene Motion fields receive safe defaults. Imported scenes are repaired to keep at least one visible layer.
 
 Uploaded image/video binary data is intentionally not embedded in JSON.
 
@@ -261,7 +341,7 @@ Uploaded image/video binary data is intentionally not embedded in JSON.
 
 - `canvas.captureStream()` + `MediaRecorder`.
 - Records the final WebGL canvas.
-- Includes masks, Temporal FX, Effect Stack, Custom SDF geometry and Multi-Mask scene compositing.
+- Includes masks, Temporal FX, Effect Stacks, Custom SDF geometry, Multi-Mask scene compositing and Scene Motion playback.
 - Studio UI/debug overlays are excluded.
 
 ## Architecture
@@ -272,7 +352,9 @@ React controls
     ├── ScenePanel
     │       ├── Scene Store
     │       ├── selected-mask EffectStackEditor
-    │       └── selected Custom BezierMaskEditor
+    │       ├── selected Custom BezierMaskEditor
+    │       └── SceneMotionControls
+    │               └── multi-lane SceneMotionTimeline
     │
     ├── CustomMaskOverlay (single-mask mode)
     │       └── Bezier Store
@@ -280,9 +362,12 @@ React controls
     └── Studio realtime loop
             ├── HandTracker
             ├── GestureController
-            │       └── Scene gesture adapter when Scene mode is active
+            │       └── Scene gesture adapter
             ├── VectorTrail
-            ├── MotionRecorder
+            ├── single-mask MotionRecorder
+            ├── SceneMotionRecorder
+            │       ├── sparse per-mask lanes
+            │       └── Scene playback sampler
             └── VfxRenderer
                     ├── camera / alternate textures
                     ├── camera-history ring
@@ -293,7 +378,7 @@ React controls
                     └── final recordable canvas
 ```
 
-High-frequency Scene transforms are updated silently in the realtime store rather than pushed through React every animation frame. React handles authored configuration, selection and low-frequency control state.
+High-frequency Scene transforms and Scene Motion playback are written into the realtime Scene Store without forcing React to rerender on every animation frame. React handles authored configuration, selection and low-frequency control state.
 
 ## Main source files
 
@@ -303,6 +388,8 @@ src/
 ├── components/
 │   ├── Studio.tsx
 │   ├── ScenePanel.tsx
+│   ├── SceneMotionControls.tsx
+│   ├── SceneMotionTimeline.tsx
 │   ├── CustomMaskOverlay.tsx
 │   ├── BezierMaskEditor.tsx
 │   ├── EffectStackEditor.tsx
@@ -317,7 +404,11 @@ src/
     ├── scene.ts
     ├── sceneStore.ts
     ├── sceneGestureRuntime.ts
+    ├── sceneInteractionRuntime.ts
     ├── sceneRuntime.ts
+    ├── sceneMotion.ts
+    ├── sceneMotionRuntime.ts
+    ├── sceneMotionEvents.ts
     ├── motion.ts
     ├── project.ts
     ├── trail.ts
@@ -344,22 +435,21 @@ Camera access requires `https://` or localhost in normal browser deployment.
 
 The following remain future work rather than placeholder UI:
 
-- Multi-mask Motion Track / geometry keyframing.
-- Keyframed Bezier anchor/handle animation.
-- Independent per-scene-node transition timelines.
-- Vector Trail as a persistent Scene Graph node.
-- Authored Effect Sequence editor with explicit time ranges.
-- Advanced Edge FX families such as electric arcs, fire, ice, particles and scanner.
-- WebGPU enhancement path.
-- Web Worker / OffscreenCanvas renderer split.
-- Full real-device profiling matrix across Android Chrome, iOS Safari and desktop Chromium.
+- manual editing/deleting of individual Scene Motion keyframes;
+- editable easing curves per lane/keyframe;
+- independent per-Scene-node transition timelines;
+- Vector Trail as a persistent Scene Graph node;
+- authored Effect Sequence editor with explicit time ranges;
+- advanced Edge FX families such as electric arcs, fire, ice, particles and scanner;
+- WebGPU enhancement path;
+- Web Worker / OffscreenCanvas renderer split;
+- full real-device profiling matrix across Android Chrome, iOS Safari and desktop Chromium.
 
-## Next milestone — v0.6 Scene Motion
+## Next milestone — v0.7 Timeline Editing + Edge FX
 
-1. Extend MotionTrack from one mask state to multiple node tracks.
-2. Record selected-mask transforms without losing independent node identities.
-3. Add node-specific timeline lanes.
-4. Keyframe Custom Bezier geometry with sparse change detection.
-5. Add Scene playback / Loop / Reverse / Ping Pong while preserving current single-mask files.
-6. Add Scene-level transitions only after timeline ownership is explicit.
-7. Profile 1 / 2 / 3 / 4 mask GPU cost on Android Chrome, iOS Safari and desktop Chromium before increasing the scene cap.
+1. Add selectable Scene Motion keyframes and delete/update operations.
+2. Add per-segment easing metadata and interpolation curves.
+3. Add Scene Motion track trimming / in-out ranges.
+4. Introduce GPU Edge FX families without folding them back into one fixed shader.
+5. Start with Scanner / Electric / Particle edge styles, then evaluate Fire / Ice cost.
+6. Profile 1 / 2 / 3 / 4-mask GPU cost on Android Chrome, iOS Safari and desktop Chromium before increasing scene complexity.
