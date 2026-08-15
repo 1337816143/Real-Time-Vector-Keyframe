@@ -70,6 +70,64 @@ export function sampleClosedCurve(curve: BezierCurve, maxPoints = 64): Vec2[] {
   return reduced;
 }
 
+function sampleClosedPolyline(points: Vec2[], count: number) {
+  const lengths: number[] = [0];
+  let total = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const next = points[(i + 1) % points.length];
+    total += distance(points[i], next);
+    lengths.push(total);
+  }
+  if (total < 0.001) return points.slice(0, count);
+
+  const result: Vec2[] = [];
+  for (let targetIndex = 0; targetIndex < count; targetIndex += 1) {
+    const target = total * targetIndex / count;
+    let segment = 0;
+    while (segment < points.length - 1 && lengths[segment + 1] < target) segment += 1;
+    const a = points[segment];
+    const b = points[(segment + 1) % points.length];
+    const span = Math.max(0.00001, lengths[segment + 1] - lengths[segment]);
+    const t = Math.min(1, Math.max(0, (target - lengths[segment]) / span));
+    result.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  }
+  return result;
+}
+
+export function curveFromFreehand(input: Vec2[], maxAnchors = 8): BezierCurve {
+  const filtered: Vec2[] = [];
+  for (const value of input) {
+    const next = { x: clamp(value.x), y: clamp(value.y) };
+    if (!filtered.length || distance(filtered[filtered.length - 1], next) >= 0.025) filtered.push(next);
+  }
+  if (filtered.length < 4) return cloneCurve(DEFAULT_BEZIER_CURVE);
+
+  if (distance(filtered[0], filtered[filtered.length - 1]) < 0.06) filtered.pop();
+  const anchorCount = Math.min(maxAnchors, Math.max(4, Math.round(filtered.length / 7)));
+  const sampled = sampleClosedPolyline(filtered, anchorCount);
+  if (sampled.length < 3) return cloneCurve(DEFAULT_BEZIER_CURVE);
+
+  const anchors: BezierAnchor[] = sampled.map((current, index) => {
+    const previous = sampled[(index - 1 + sampled.length) % sampled.length];
+    const next = sampled[(index + 1) % sampled.length];
+    const tangent = { x: next.x - previous.x, y: next.y - previous.y };
+    const tangentLength = Math.max(0.0001, Math.hypot(tangent.x, tangent.y));
+    const neighborLength = Math.min(distance(previous, current), distance(current, next));
+    const handleLength = neighborLength * 0.36;
+    const tx = tangent.x / tangentLength * handleLength;
+    const ty = tangent.y / tangentLength * handleLength;
+    return {
+      id: `drawn-${Date.now()}-${index}`,
+      point: { ...current },
+      handleIn: { x: clamp(current.x - tx), y: clamp(current.y - ty) },
+      handleOut: { x: clamp(current.x + tx), y: clamp(current.y + ty) },
+      linked: true,
+    };
+  });
+
+  return { version: 1, closed: true, anchors };
+}
+
 export function updateAnchor(
   curve: BezierCurve,
   id: string,
