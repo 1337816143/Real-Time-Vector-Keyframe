@@ -49,7 +49,7 @@
 
 .scene-motion-lane-track {
   position: relative;
-  height: 22px;
+  height: 24px;
   overflow: hidden;
   border: 1px solid rgba(159, 209, 238, .09);
   border-radius: 6px;
@@ -59,35 +59,81 @@
   touch-action: none;
 }
 
-.scene-motion-progress {
+.scene-motion-range-shade,
+.scene-motion-range-line,
+.scene-motion-progress,
+.scene-motion-playhead {
   position: absolute;
+  pointer-events: none;
+}
+
+.scene-motion-range-shade {
+  inset: 0 auto 0 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, .28);
+}
+
+.scene-motion-range-shade.right {
+  right: 0;
+  width: auto;
+}
+
+.scene-motion-range-line {
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 198, 104, .7);
+}
+
+.scene-motion-range-line.out {
+  background: rgba(255, 135, 156, .72);
+}
+
+.scene-motion-progress {
+  z-index: 2;
   inset: 0 auto 0 0;
   background: rgba(73, 187, 236, .075);
-  pointer-events: none;
 }
 
 .scene-motion-key {
   position: absolute;
+  z-index: 5;
   top: 50%;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   padding: 0;
   border: 1px solid rgba(182, 229, 250, .84);
   border-radius: 2px;
   background: rgba(89, 197, 240, .86);
   box-shadow: 0 0 6px rgba(89, 197, 240, .24);
   transform: translate(-50%, -50%) rotate(45deg);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.scene-motion-key:hover,
+.scene-motion-key.selected {
+  width: 10px;
+  height: 10px;
+  border-color: rgba(255, 255, 255, .96);
+  background: rgba(111, 222, 255, 1);
+  box-shadow: 0 0 10px rgba(80, 210, 255, .58);
+}
+
+.scene-motion-key.fixed {
+  cursor: default;
+  background: rgba(185, 208, 222, .7);
 }
 
 .scene-motion-playhead {
-  position: absolute;
+  z-index: 6;
   top: 0;
   bottom: 0;
   width: 1px;
   background: rgba(236, 250, 255, .92);
   box-shadow: 0 0 5px rgba(111, 218, 255, .58);
   transform: translateX(-.5px);
-  pointer-events: none;
 }
 
 @media (max-width: 680px) {
