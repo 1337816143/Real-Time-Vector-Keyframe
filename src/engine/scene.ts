@@ -177,7 +177,7 @@ export function moveSceneMask(scene: MaskSceneGraph, id: string, direction: -1 |
   const index = next.nodes.findIndex((node) => node.id === id);
   const target = index + direction;
   if (index < 0 || target < 0 || target >= next.nodes.length) return next;
-  [next.nodes[index], nodes[target]] = [nodes[target], nodes[index]];
+  [next.nodes[index], next.nodes[target]] = [next.nodes[target], next.nodes[index]];
   return next;
 }
 
