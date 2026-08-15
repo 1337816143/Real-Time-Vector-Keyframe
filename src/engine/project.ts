@@ -1,4 +1,5 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
+import { getBezierMaskState, setBezierCurve, setCustomMaskEnabled } from './bezierStore';
 import {
   PRESETS,
   type BezierCurve,
@@ -35,6 +36,10 @@ export interface ProjectSnapshot {
   };
   motion?: MotionTrack;
 }
+
+type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask'> & {
+  mask: Omit<ProjectSnapshot['mask'], 'customCurve'> & { customCurve?: BezierCurve };
+};
 
 const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
 const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
@@ -176,15 +181,18 @@ function sanitizeMotion(value: unknown): MotionTrack | undefined {
   return { version: 1, duration, keyframes };
 }
 
-export function createProjectSnapshot(input: Omit<ProjectSnapshot, 'version' | 'savedAt'>): ProjectSnapshot {
+export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnapshot {
+  const bezierState = getBezierMaskState();
+  const customCurve = input.mask.customCurve ?? bezierState.curve;
   return {
     version: 1,
     savedAt: new Date().toISOString(),
     ...input,
     mask: {
       ...input.mask,
+      type: bezierState.enabled ? 'custom' : input.mask.type,
       transform: { ...input.mask.transform },
-      customCurve: cloneCurve(input.mask.customCurve),
+      customCurve: cloneCurve(customCurve),
     },
     effects: {
       ...input.effects,
@@ -217,15 +225,20 @@ export function parseProject(text: string): ProjectSnapshot {
   const carousel = object(root.carousel ?? {});
   const presetFallback = 'multiverse' as PresetId;
   const preset = typeof root.preset === 'string' && root.preset in PRESETS ? root.preset as PresetId : presetFallback;
+  const maskType = enumValue(mask.type, MASK_TYPES, PRESETS[preset].mask);
+  const customCurve = sanitizeCurve(mask.customCurve);
+  setBezierCurve(customCurve);
+  setCustomMaskEnabled(maskType === 'custom');
+
   return {
     version: 1,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : new Date().toISOString(),
     preset,
     mask: {
-      type: enumValue(mask.type, MASK_TYPES, PRESETS[preset].mask),
+      type: maskType,
       transform: sanitizeTransform(mask.transform),
       trailReleaseMode: enumValue(mask.trailReleaseMode, TRAIL_MODES, 'dissipate'),
-      customCurve: sanitizeCurve(mask.customCurve),
+      customCurve,
     },
     effects: sanitizeEffects(root.effects),
     carousel: {
