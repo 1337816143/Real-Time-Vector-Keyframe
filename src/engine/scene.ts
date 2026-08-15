@@ -1,10 +1,13 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
-import { DEFAULT_TRANSFORM, PRESETS, type BezierCurve, type EffectSettings, type MaskTransform } from './types';
+import { DEFAULT_TRANSFORM, PRESETS, type BezierCurve, type EffectSettings, type MaskTransform, type Vec2 } from './types';
+
+export type SceneTrailPoint = Vec2 & { width: number };
 
 export type SceneMaskGeometry =
   | { kind: 'circle' }
   | { kind: 'blob' }
   | { kind: 'portal' }
+  | { kind: 'trail'; points: SceneTrailPoint[] }
   | {
       kind: 'custom';
       curve: BezierCurve;
@@ -34,13 +37,21 @@ const cloneEffects = (effects: EffectSettings): EffectSettings => ({
 });
 
 const cloneGeometry = (geometry: SceneMaskGeometry): SceneMaskGeometry => {
-  if (geometry.kind !== 'custom') return { kind: geometry.kind };
-  return {
-    kind: 'custom',
-    curve: cloneCurve(geometry.curve),
-    feather: geometry.feather,
-    expansion: geometry.expansion,
-  };
+  if (geometry.kind === 'custom') {
+    return {
+      kind: 'custom',
+      curve: cloneCurve(geometry.curve),
+      feather: geometry.feather,
+      expansion: geometry.expansion,
+    };
+  }
+  if (geometry.kind === 'trail') {
+    return {
+      kind: 'trail',
+      points: geometry.points.map((point) => ({ ...point })),
+    };
+  }
+  return { kind: geometry.kind };
 };
 
 export function cloneMaskNode(node: SceneMaskNode): SceneMaskNode {
@@ -96,6 +107,46 @@ export function createCustomSceneNode(name = 'Custom Mask'): SceneMaskNode {
   );
 }
 
+export function createTrailSceneNode(name = 'Vector Trail'): SceneMaskNode {
+  return createSceneMaskNode(
+    { kind: 'trail', points: [] },
+    {
+      name,
+      effects: PRESETS.slash.effects,
+      transform: { x: 0.5, y: 0.5, scale: 0.22, rotation: 0 },
+    },
+  );
+}
+
+export function worldTrailPointToLocal(point: SceneTrailPoint, transform: MaskTransform): SceneTrailPoint {
+  const scale = Math.max(0.03, transform.scale);
+  const dx = point.x - transform.x;
+  const dy = point.y - transform.y;
+  const c = Math.cos(-transform.rotation);
+  const s = Math.sin(-transform.rotation);
+  return {
+    x: (dx * c - dy * s) / scale,
+    y: (dx * s + dy * c) / scale,
+    width: point.width / scale,
+  };
+}
+
+export function sceneTrailPointToWorld(point: SceneTrailPoint, transform: MaskTransform): SceneTrailPoint {
+  const x = point.x * transform.scale;
+  const y = point.y * transform.scale;
+  const c = Math.cos(transform.rotation);
+  const s = Math.sin(transform.rotation);
+  return {
+    x: transform.x + x * c - y * s,
+    y: transform.y + x * s + y * c,
+    width: Math.max(0.002, point.width * transform.scale),
+  };
+}
+
+export function sceneTrailToWorld(points: SceneTrailPoint[], transform: MaskTransform) {
+  return points.map((point) => sceneTrailPointToWorld(point, transform));
+}
+
 export function selectSceneMask(scene: MaskSceneGraph, id?: string): MaskSceneGraph {
   if (id && !scene.nodes.some((node) => node.id === id)) return cloneScene(scene);
   return { ...cloneScene(scene), selectedMaskId: id };
@@ -126,7 +177,7 @@ export function moveSceneMask(scene: MaskSceneGraph, id: string, direction: -1 |
   const index = next.nodes.findIndex((node) => node.id === id);
   const target = index + direction;
   if (index < 0 || target < 0 || target >= next.nodes.length) return next;
-  [next.nodes[index], next.nodes[target]] = [next.nodes[target], next.nodes[index]];
+  [next.nodes[index], nodes[target]] = [nodes[target], nodes[index]];
   return next;
 }
 
