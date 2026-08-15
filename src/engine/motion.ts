@@ -45,9 +45,12 @@ function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
     Math.abs(a.effects.ripple - b.effects.ripple) +
     Math.abs(a.effects.distortion - b.effects.distortion) +
     Math.abs(a.effects.glow - b.effects.glow) * 0.02 +
+    Math.abs((a.effects.edgeFxSpeed ?? 1) - (b.effects.edgeFxSpeed ?? 1)) * 0.01 +
+    Math.abs((a.effects.edgeFxDensity ?? 1) - (b.effects.edgeFxDensity ?? 1)) * 0.01 +
     Math.abs(a.effects.temporalMix - b.effects.temporalMix) * 0.02;
   const stackChanged = JSON.stringify(a.effects.effectStack) !== JSON.stringify(b.effects.effectStack);
-  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || a.gestureState !== b.gestureState;
+  const edgeChanged = (a.effects.edgeFxMode ?? 'neon') !== (b.effects.edgeFxMode ?? 'neon');
+  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || edgeChanged || a.gestureState !== b.gestureState;
 }
 
 export class MotionRecorder {
@@ -228,6 +231,9 @@ export class MotionRecorder {
         pixelate: lerp(a.effects.pixelate, b.effects.pixelate, mix),
         distortion: lerp(a.effects.distortion, b.effects.distortion, mix),
         glow: lerp(a.effects.glow, b.effects.glow, mix),
+        edgeFxMode: mix < 0.5 ? (a.effects.edgeFxMode ?? 'neon') : (b.effects.edgeFxMode ?? 'neon'),
+        edgeFxSpeed: lerp(a.effects.edgeFxSpeed ?? 1, b.effects.edgeFxSpeed ?? 1, mix),
+        edgeFxDensity: lerp(a.effects.edgeFxDensity ?? 1, b.effects.edgeFxDensity ?? 1, mix),
         invertMask: mix < 0.5 ? a.effects.invertMask : b.effects.invertMask,
         useAlternateMedia: mix < 0.5 ? a.effects.useAlternateMedia : b.effects.useAlternateMedia,
         temporalMode: mix < 0.5 ? a.effects.temporalMode : b.effects.temporalMode,
