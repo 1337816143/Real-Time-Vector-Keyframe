@@ -1,0 +1,177 @@
+.effect-sequence-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(156, 209, 239, .1);
+}
+
+.effect-sequence-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.effect-sequence-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.effect-sequence-head strong {
+  color: rgba(234, 248, 255, .84);
+  font-size: 10px;
+}
+
+.effect-sequence-head > span {
+  color: rgba(169, 211, 233, .46);
+  font: 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.effect-sequence-preview {
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border: 1px solid rgba(155, 210, 241, .08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .018);
+}
+
+.effect-sequence-preview > span,
+.effect-sequence-range > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.effect-sequence-preview b,
+.effect-sequence-range b,
+.effect-sequence-grid label > span {
+  color: rgba(199, 225, 239, .55);
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.effect-sequence-preview code,
+.effect-sequence-range code {
+  color: rgba(128, 217, 255, .78);
+  font-size: 8px;
+}
+
+.effect-sequence-preview input,
+.effect-sequence-range input {
+  width: 100%;
+}
+
+.effect-sequence-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  border: 1px solid rgba(103, 215, 255, .18);
+  border-radius: 9px;
+  background: rgba(69, 177, 226, .07);
+  color: rgba(224, 246, 255, .78);
+  font-size: 9px;
+}
+
+.effect-sequence-add:hover:not(:disabled) {
+  border-color: rgba(105, 219, 255, .34);
+  background: rgba(69, 177, 226, .11);
+}
+
+.effect-sequence-add:disabled {
+  opacity: .34;
+}
+
+.effect-sequence-list {
+  display: grid;
+  gap: 7px;
+}
+
+.effect-sequence-clip {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(158, 211, 241, .1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .02);
+}
+
+.effect-sequence-clip.disabled {
+  opacity: .48;
+}
+
+.effect-sequence-clip-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.effect-sequence-clip-head > button,
+.effect-sequence-clip-head > div button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(159, 211, 240, .1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .025);
+  color: rgba(211, 236, 249, .58);
+}
+
+.effect-sequence-clip-head > div {
+  display: flex;
+  gap: 3px;
+}
+
+.effect-sequence-clip-head button:disabled {
+  opacity: .28;
+}
+
+.effect-sequence-clip-head > input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(159, 211, 240, .1);
+  border-radius: 7px;
+  outline: none;
+  background: rgba(7, 16, 25, .72);
+  color: rgba(230, 247, 255, .8);
+  font-size: 9px;
+}
+
+.effect-sequence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.effect-sequence-grid label {
+  display: grid;
+  gap: 3px;
+}
+
+.effect-sequence-grid select {
+  min-width: 0;
+  height: 29px;
+  border: 1px solid rgba(159, 211, 240, .1);
+  border-radius: 7px;
+  background: rgba(7, 16, 25, .9);
+  color: rgba(225, 244, 254, .72);
+  font-size: 8px;
+}
+
+.effect-sequence-range {
+  display: grid;
+  gap: 3px;
+}
+
+@media (max-width: 680px) {
+  .effect-sequence-grid {
+    grid-template-columns: 1fr;
+  }
+}
