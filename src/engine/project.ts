@@ -1,6 +1,7 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
 import { cloneScene, createDefaultScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import { sceneMotionRecorder, type SceneMotionTrack } from './sceneMotion';
 import { getSceneState, replaceScene } from './sceneStore';
 import {
   PRESETS,
@@ -43,15 +44,17 @@ export interface ProjectSnapshot {
     graph: MaskSceneGraph;
   };
   motion?: MotionTrack;
+  sceneMotion?: SceneMotionTrack;
 }
 
-type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask' | 'scene'> & {
+type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask' | 'scene' | 'sceneMotion'> & {
   mask: Omit<ProjectSnapshot['mask'], 'customCurve' | 'customFeather' | 'customExpansion'> & {
     customCurve?: BezierCurve;
     customFeather?: number;
     customExpansion?: number;
   };
   scene?: ProjectSnapshot['scene'];
+  sceneMotion?: SceneMotionTrack;
 };
 
 const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
@@ -211,35 +214,92 @@ function sanitizeSceneGeometry(value: unknown): SceneMaskGeometry {
   }
 }
 
+function sanitizeSceneNode(value: unknown, index: number, forcedId?: string): SceneMaskNode | undefined {
+  try {
+    const item = object(value);
+    const id = forcedId ?? (typeof item.id === 'string' && item.id ? item.id : `mask-import-${index}`);
+    return {
+      id,
+      name: typeof item.name === 'string' && item.name ? item.name.slice(0, 80) : `Mask ${index + 1}`,
+      visible: bool(item.visible, true),
+      locked: bool(item.locked, false),
+      transform: sanitizeTransform(item.transform),
+      geometry: sanitizeSceneGeometry(item.geometry),
+      effects: sanitizeEffects(item.effects),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeSceneGraph(value: unknown): MaskSceneGraph | undefined {
+  try {
+    const graphRaw = object(value);
+    const rawNodes = Array.isArray(graphRaw.nodes) ? graphRaw.nodes : [];
+    const nodes = rawNodes.slice(0, 4).flatMap((raw, index): SceneMaskNode[] => {
+      const node = sanitizeSceneNode(raw, index);
+      return node ? [node] : [];
+    });
+    if (!nodes.length) return undefined;
+    if (!nodes.some((node) => node.visible)) nodes[0].visible = true;
+    const selectedCandidate = typeof graphRaw.selectedMaskId === 'string' ? graphRaw.selectedMaskId : undefined;
+    const selectedMaskId = nodes.some((node) => node.id === selectedCandidate) ? selectedCandidate : nodes[0].id;
+    return { version: 1, selectedMaskId, nodes };
+  } catch {
+    return undefined;
+  }
+}
+
 function sanitizeScene(value: unknown): { enabled: boolean; graph: MaskSceneGraph } | undefined {
   if (!value) return undefined;
   try {
     const container = object(value);
-    const graphRaw = object(container.graph);
-    const rawNodes = Array.isArray(graphRaw.nodes) ? graphRaw.nodes : [];
-    const nodes = rawNodes.slice(0, 4).flatMap((raw, index): SceneMaskNode[] => {
+    const graph = sanitizeSceneGraph(container.graph);
+    if (!graph) return undefined;
+    return { enabled: bool(container.enabled, false), graph };
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeSceneMotion(value: unknown): SceneMotionTrack | undefined {
+  if (!value) return undefined;
+  try {
+    const item = object(value);
+    const template = sanitizeSceneGraph(item.template);
+    if (!template) return undefined;
+    const templateIds = new Set(template.nodes.map((node) => node.id));
+    const rawLanes = Array.isArray(item.lanes) ? item.lanes : [];
+    const lanes = rawLanes.slice(0, 4).flatMap((rawLane, laneIndex) => {
       try {
-        const item = object(raw);
+        const lane = object(rawLane);
+        const maskId = typeof lane.maskId === 'string' ? lane.maskId : '';
+        if (!maskId || !templateIds.has(maskId)) return [];
+        const rawFrames = Array.isArray(lane.keyframes) ? lane.keyframes : [];
+        const keyframes = rawFrames.slice(0, 2400).flatMap((rawFrame, frameIndex) => {
+          try {
+            const frame = object(rawFrame);
+            const node = sanitizeSceneNode(frame.node, frameIndex, maskId);
+            if (!node) return [];
+            return [{ t: Math.max(0, finite(frame.t, 0)), node }];
+          } catch {
+            return [];
+          }
+        }).sort((a, b) => a.t - b.t);
+        if (keyframes.length < 2) return [];
         return [{
-          id: typeof item.id === 'string' && item.id ? item.id : `mask-import-${index}`,
-          name: typeof item.name === 'string' && item.name ? item.name.slice(0, 80) : `Mask ${index + 1}`,
-          visible: bool(item.visible, true),
-          locked: bool(item.locked, false),
-          transform: sanitizeTransform(item.transform),
-          geometry: sanitizeSceneGeometry(item.geometry),
-          effects: sanitizeEffects(item.effects),
+          maskId,
+          name: typeof lane.name === 'string' && lane.name ? lane.name.slice(0, 80) : `Lane ${laneIndex + 1}`,
+          keyframes,
         }];
       } catch {
         return [];
       }
     });
-    if (!nodes.length) return undefined;
-    const selectedCandidate = typeof graphRaw.selectedMaskId === 'string' ? graphRaw.selectedMaskId : undefined;
-    const selectedMaskId = nodes.some((node) => node.id === selectedCandidate) ? selectedCandidate : nodes[0].id;
-    return {
-      enabled: bool(container.enabled, false),
-      graph: { version: 1, selectedMaskId, nodes },
-    };
+    if (!lanes.length) return undefined;
+    const lastTime = Math.max(...lanes.map((lane) => lane.keyframes[lane.keyframes.length - 1]?.t ?? 0));
+    const duration = Math.max(1, finite(item.duration, lastTime), lastTime);
+    return { version: 1, duration, template, lanes };
   } catch {
     return undefined;
   }
@@ -282,6 +342,7 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
         interactionPoint: frame.interactionPoint ? { ...frame.interactionPoint } : undefined,
       })),
     } : undefined,
+    sceneMotion: input.sceneMotion ?? sceneMotionRecorder.getTrack(),
   };
 }
 
@@ -311,6 +372,9 @@ export function parseProject(text: string): ProjectSnapshot {
   if (scene) replaceScene(scene.graph, scene.enabled);
   else replaceScene(createDefaultScene(), false);
 
+  const sceneMotion = sanitizeSceneMotion(root.sceneMotion);
+  sceneMotionRecorder.loadTrack(sceneMotion);
+
   return {
     version: 1,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : new Date().toISOString(),
@@ -332,5 +396,6 @@ export function parseProject(text: string): ProjectSnapshot {
     },
     scene,
     motion: sanitizeMotion(root.motion),
+    sceneMotion,
   };
 }
