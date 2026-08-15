@@ -1,5 +1,16 @@
 import { cloneCurve } from './bezier';
-import { cloneScene, createCustomSceneNode, createDefaultScene, createSceneMaskNode, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import {
+  cloneScene,
+  createCustomSceneNode,
+  createDefaultScene,
+  createSceneMaskNode,
+  createTrailSceneNode,
+  worldTrailPointToLocal,
+  type MaskSceneGraph,
+  type SceneMaskGeometry,
+  type SceneMaskNode,
+  type SceneTrailPoint,
+} from './scene';
 import { sceneMotionRecorder } from './sceneMotion';
 import { PRESETS, type BezierCurve, type EffectSettings, type MaskTransform, type PresetId } from './types';
 
@@ -61,13 +72,15 @@ export function selectMask(id: string) {
 
 export function addMask(kind: SceneMaskGeometry['kind']) {
   if (topologyLocked() || state.scene.nodes.length >= 4) return;
+  const spawn = SPAWN_TRANSFORMS[Math.min(state.scene.nodes.length, SPAWN_TRANSFORMS.length - 1)];
   const geometry: SceneMaskGeometry = kind === 'custom'
     ? createCustomSceneNode().geometry
-    : { kind } as SceneMaskGeometry;
-  const spawn = SPAWN_TRANSFORMS[Math.min(state.scene.nodes.length, SPAWN_TRANSFORMS.length - 1)];
+    : kind === 'trail'
+      ? createTrailSceneNode().geometry
+      : { kind } as SceneMaskGeometry;
   const node = createSceneMaskNode(geometry, {
-    name: `${kind[0].toUpperCase()}${kind.slice(1)} ${String(state.scene.nodes.length + 1).padStart(2, '0')}`,
-    effects: PRESETS.multiverse.effects,
+    name: `${kind === 'trail' ? 'Trail' : `${kind[0].toUpperCase()}${kind.slice(1)}`} ${String(state.scene.nodes.length + 1).padStart(2, '0')}`,
+    effects: kind === 'trail' ? PRESETS.slash.effects : PRESETS.multiverse.effects,
     transform: spawn,
   });
   state = {
@@ -161,6 +174,43 @@ export function setCustomMaskGeometry(
           },
         };
       }),
+    },
+  };
+  emit();
+}
+
+export function clearTrailGeometry(id: string, notify = true) {
+  const node = state.scene.nodes.find((item) => item.id === id);
+  if (!node || node.geometry.kind !== 'trail') return;
+  node.geometry = { kind: 'trail', points: [] };
+  if (notify) emit();
+}
+
+export function appendTrailPointSilently(id: string, worldPoint: SceneTrailPoint) {
+  const node = state.scene.nodes.find((item) => item.id === id);
+  if (!node || node.geometry.kind !== 'trail') return;
+  const local = worldTrailPointToLocal(worldPoint, node.transform);
+  const points = node.geometry.points;
+  const previous = points[points.length - 1];
+  if (previous) {
+    const scaledDistance = Math.hypot(previous.x - local.x, previous.y - local.y) * node.transform.scale;
+    if (scaledDistance < 0.004) return;
+  }
+  if (points.length >= 32) {
+    const reduced = points.filter((_, index) => index % 2 === 0).map((point) => ({ ...point }));
+    node.geometry = { kind: 'trail', points: reduced };
+  }
+  node.geometry.points.push(local);
+}
+
+export function replaceTrailGeometry(id: string, points: SceneTrailPoint[]) {
+  state = {
+    ...state,
+    scene: {
+      ...state.scene,
+      nodes: state.scene.nodes.map((node) => node.id === id && node.geometry.kind === 'trail'
+        ? { ...node, geometry: { kind: 'trail', points: points.slice(0, 32).map((point) => ({ ...point })) } }
+        : node),
     },
   };
   emit();
