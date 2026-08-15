@@ -7,6 +7,13 @@ export interface RealtimeSceneState {
   scene: MaskSceneGraph;
 }
 
+const SPAWN_TRANSFORMS: MaskTransform[] = [
+  { x: 0.5, y: 0.5, scale: 0.22, rotation: 0 },
+  { x: 0.34, y: 0.43, scale: 0.18, rotation: -0.08 },
+  { x: 0.66, y: 0.45, scale: 0.18, rotation: 0.08 },
+  { x: 0.52, y: 0.68, scale: 0.17, rotation: 0 },
+];
+
 let state: RealtimeSceneState = {
   enabled: false,
   scene: createDefaultScene(),
@@ -51,9 +58,11 @@ export function addMask(kind: SceneMaskGeometry['kind']) {
   const geometry: SceneMaskGeometry = kind === 'custom'
     ? createCustomSceneNode().geometry
     : { kind } as SceneMaskGeometry;
+  const spawn = SPAWN_TRANSFORMS[Math.min(state.scene.nodes.length, SPAWN_TRANSFORMS.length - 1)];
   const node = createSceneMaskNode(geometry, {
     name: `${kind[0].toUpperCase()}${kind.slice(1)} ${String(state.scene.nodes.length + 1).padStart(2, '0')}`,
     effects: PRESETS.multiverse.effects,
+    transform: spawn,
   });
   state = {
     ...state,
