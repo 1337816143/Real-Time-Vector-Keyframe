@@ -4,6 +4,7 @@ import {
   appendTrailPointSilently,
   clearTrailGeometry,
   getSceneState,
+  replaceTrailGeometry,
   selectedMask,
   setMaskTransformSilently,
 } from './sceneStore';
@@ -40,6 +41,9 @@ export function installSceneGestureRuntime() {
       }
 
       if (result.trailPoint) appendTrailPointSilently(selected.id, result.trailPoint);
+      if (result.released && selected.geometry.kind === 'trail') {
+        replaceTrailGeometry(selected.id, selected.geometry.points);
+      }
       this.setTransform(baseTransform);
       result.transform = { ...baseTransform };
       return result;
