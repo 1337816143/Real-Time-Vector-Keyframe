@@ -1,7 +1,14 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
 import { getEffectSequenceTrack, replaceEffectSequence, type EffectSequenceTrack } from './effectSequence';
-import { cloneScene, createDefaultScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import {
+  cloneScene,
+  createDefaultScene,
+  type MaskSceneGraph,
+  type SceneMaskGeometry,
+  type SceneMaskNode,
+  type SceneTrailPoint,
+} from './scene';
 import { sceneMotionRecorder, type SceneMotionEasing, type SceneMotionTrack } from './sceneMotion';
 import { getSceneState, replaceScene } from './sceneStore';
 import {
@@ -69,7 +76,7 @@ const EFFECT_TYPES: EffectNodeType[] = ['rgbSplit', 'ripple', 'pixelate', 'disto
 const BLEND_MODES: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 const EDGE_FX_MODES: EdgeFxMode[] = ['none', 'neon', 'scanner', 'electric', 'particle'];
 const GESTURE_STATES: GestureState[] = ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'];
-const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'custom'] as const;
+const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'trail', 'custom'] as const;
 const SCENE_EASINGS: SceneMotionEasing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
 const PRESET_IDS = Object.keys(PRESETS) as PresetId[];
 
@@ -96,6 +103,22 @@ function sanitizePoint(value: unknown, fallback: Vec2): Vec2 {
   } catch {
     return { ...fallback };
   }
+}
+
+function sanitizeTrailPoints(value: unknown): SceneTrailPoint[] {
+  const raw = Array.isArray(value) ? value : [];
+  return raw.slice(0, 32).flatMap((entry): SceneTrailPoint[] => {
+    try {
+      const point = object(entry);
+      return [{
+        x: clamp(finite(point.x, 0), -8, 8),
+        y: clamp(finite(point.y, 0), -8, 8),
+        width: clamp(finite(point.width, 0.08), 0.002, 2),
+      }];
+    } catch {
+      return [];
+    }
+  });
 }
 
 function sanitizeCurve(value: unknown): BezierCurve {
@@ -212,6 +235,7 @@ function sanitizeSceneGeometry(value: unknown): SceneMaskGeometry {
   try {
     const item = object(value);
     const kind = enumValue(item.kind, SCENE_GEOMETRY, 'portal');
+    if (kind === 'trail') return { kind: 'trail', points: sanitizeTrailPoints(item.points) };
     if (kind !== 'custom') return { kind };
     return {
       kind: 'custom',
