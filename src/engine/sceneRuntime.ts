@@ -15,7 +15,8 @@ export function installSceneRuntime() {
     state: RenderState,
   ) {
     const sceneState = getSceneState();
-    if (!sceneState.enabled) return fallbackRender.call(this, camera, alternate, state);
+    const visible = sceneState.scene.nodes.some((node) => node.visible);
+    if (!sceneState.enabled || !visible) return fallbackRender.call(this, camera, alternate, state);
     return this.renderScene(camera, alternate, state, sceneState.scene.nodes);
   };
 }
