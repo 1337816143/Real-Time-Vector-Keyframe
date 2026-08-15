@@ -1,0 +1,86 @@
+.custom-mask-overlay {
+  position: fixed;
+  left: 18px;
+  bottom: 92px;
+  z-index: 32;
+  width: min(344px, calc(100vw - 36px));
+  padding: 8px;
+  border-radius: 16px;
+  backdrop-filter: blur(18px);
+}
+
+.custom-mask-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.custom-mask-enable {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(224, 241, 251, .7);
+  text-align: left;
+}
+
+.custom-mask-enable > span {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 1px;
+}
+
+.custom-mask-enable b {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.custom-mask-enable small {
+  font-size: 9px;
+  color: rgba(188, 216, 234, .5);
+}
+
+.custom-mask-enable > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(180, 202, 216, .28);
+  box-shadow: 0 0 0 4px rgba(160, 198, 220, .04);
+}
+
+.custom-mask-enable.active {
+  border-color: rgba(103, 214, 255, .2);
+  background: rgba(77, 188, 235, .08);
+  color: rgba(239, 250, 255, .96);
+}
+
+.custom-mask-enable.active > i {
+  background: rgba(106, 229, 183, .95);
+  box-shadow: 0 0 0 4px rgba(106, 229, 183, .08), 0 0 12px rgba(106, 229, 183, .35);
+}
+
+.custom-mask-overlay .bezier-editor {
+  margin-top: 8px;
+  max-height: min(64vh, 520px);
+  overflow: auto;
+}
+
+@media (max-width: 680px) {
+  .custom-mask-overlay {
+    left: 10px;
+    bottom: 82px;
+    width: calc(100vw - 20px);
+    border-radius: 15px;
+  }
+
+  .custom-mask-overlay.open {
+    max-height: 67vh;
+    overflow: auto;
+  }
+}
