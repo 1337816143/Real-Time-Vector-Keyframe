@@ -1,18 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, Radio, Repeat2, Rewind, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { sceneMotionRecorder, type SceneMotionTrack } from '../engine/sceneMotion';
+import { subscribeSceneMotionTrack } from '../engine/sceneMotionEvents';
 import { getSceneState, replaceScene, setSceneEnabled } from '../engine/sceneStore';
 import type { PlaybackMode } from '../engine/types';
 import SceneMotionTimeline from './SceneMotionTimeline';
 import './SceneMotionControls.css';
 
-export default function SceneMotionControls() {
+export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (busy: boolean) => void }) {
   const [recording, setRecording] = useState(sceneMotionRecorder.isRecording());
   const [playing, setPlaying] = useState(sceneMotionRecorder.isPlaying());
   const [mode, setMode] = useState<PlaybackMode>('loop');
   const [track, setTrack] = useState<SceneMotionTrack | undefined>(() => sceneMotionRecorder.getTrack());
   const [progress, setProgress] = useState(0);
   const wasPlayingRef = useRef(playing);
+
+  useEffect(() => {
+    onBusyChange?.(recording || playing);
+  }, [onBusyChange, playing, recording]);
+
+  useEffect(() => subscribeSceneMotionTrack(() => {
+    setTrack(sceneMotionRecorder.getTrack());
+    setRecording(sceneMotionRecorder.isRecording());
+    setPlaying(sceneMotionRecorder.isPlaying());
+    setProgress(0);
+    wasPlayingRef.current = sceneMotionRecorder.isPlaying();
+  }), []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -70,17 +83,18 @@ export default function SceneMotionControls() {
     wasPlayingRef.current = false;
   };
 
+  const currentTrack = track ?? sceneMotionRecorder.getTrack();
+
   const scrub = (nextProgress: number) => {
-    if (!track) return;
+    if (!currentTrack) return;
     sceneMotionRecorder.stopPlayback();
-    const sampled = sceneMotionRecorder.sampleAt(track.duration * Math.min(1, Math.max(0, nextProgress)));
+    const sampled = sceneMotionRecorder.sampleAt(currentTrack.duration * Math.min(1, Math.max(0, nextProgress)));
     if (sampled) replaceScene(sampled, true);
     setPlaying(false);
     wasPlayingRef.current = false;
     setProgress(nextProgress);
   };
 
-  const currentTrack = track ?? sceneMotionRecorder.getTrack();
   const keyCount = currentTrack?.lanes.reduce((sum, lane) => sum + lane.keyframes.length, 0) ?? 0;
 
   return (
