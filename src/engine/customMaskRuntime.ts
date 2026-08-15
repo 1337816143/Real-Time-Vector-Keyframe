@@ -16,15 +16,24 @@ export function installCustomMaskRuntime() {
     state: RenderState,
   ) {
     const bezier = getBezierMaskState();
-    if (!bezier.enabled && state.maskType !== 'custom') {
-      return originalRender.call(this, camera, alternate, state);
+
+    if (bezier.enabled) {
+      const customState: RenderState = {
+        ...state,
+        maskType: 'custom',
+        customMask: sampleClosedCurve(bezier.curve, 64),
+      };
+      return originalRender.call(this, camera, alternate, customState);
     }
 
-    const customState: RenderState = {
-      ...state,
-      maskType: 'custom',
-      customMask: sampleClosedCurve(bezier.curve, 64),
-    };
-    return originalRender.call(this, camera, alternate, customState);
+    if (state.maskType === 'custom') {
+      return originalRender.call(this, camera, alternate, {
+        ...state,
+        maskType: 'portal',
+        customMask: undefined,
+      });
+    }
+
+    return originalRender.call(this, camera, alternate, state);
   };
 }
