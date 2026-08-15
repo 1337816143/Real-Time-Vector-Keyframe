@@ -1,14 +1,16 @@
 import { useMemo, useRef, useState, type PointerEvent } from 'react';
-import { Link2, Plus, RotateCcw, Trash2, Unlink2 } from 'lucide-react';
+import { Link2, Pencil, Plus, RotateCcw, Trash2, Unlink2 } from 'lucide-react';
 import {
   DEFAULT_BEZIER_CURVE,
   cloneCurve,
+  curveFromFreehand,
   insertAnchorAfter,
   removeAnchor,
   setAnchorLinked,
   updateAnchor,
 } from '../engine/bezier';
 import type { BezierCurve, Vec2 } from '../engine/types';
+import './BezierMaskEditor.css';
 
 interface Props {
   curve: BezierCurve;
@@ -24,6 +26,7 @@ type DragState = {
 };
 
 const svgPoint = (point: Vec2) => ({ x: (point.x + 1) * 50, y: (point.y + 1) * 50 });
+const distance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function pathData(curve: BezierCurve) {
   if (!curve.anchors.length) return '';
@@ -43,6 +46,9 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [selectedId, setSelectedId] = useState(curve.anchors[0]?.id ?? '');
   const [drag, setDrag] = useState<DragState>();
+  const [drawing, setDrawing] = useState(false);
+  const [drawPointerId, setDrawPointerId] = useState<number>();
+  const [freehand, setFreehand] = useState<Vec2[]>([]);
   const selectedIndex = Math.max(0, curve.anchors.findIndex((anchor) => anchor.id === selectedId));
   const selected = curve.anchors[selectedIndex];
   const d = useMemo(() => pathData(curve), [curve]);
@@ -57,18 +63,44 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
   };
 
   const beginDrag = (event: PointerEvent<SVGCircleElement>, id: string, kind: DragKind) => {
+    if (drawing) return;
     event.stopPropagation();
     setSelectedId(id);
     setDrag({ id, kind, pointerId: event.pointerId });
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
-  const moveDrag = (event: PointerEvent<SVGSVGElement>) => {
+  const beginFreehand = (event: PointerEvent<SVGSVGElement>) => {
+    if (!drawing) return;
+    const next = pointerToLocal(event);
+    setFreehand([next]);
+    setDrawPointerId(event.pointerId);
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const movePointer = (event: PointerEvent<SVGSVGElement>) => {
+    if (drawing && drawPointerId === event.pointerId) {
+      const next = pointerToLocal(event);
+      setFreehand((current) => !current.length || distance(current[current.length - 1], next) >= 0.015 ? [...current, next] : current);
+      return;
+    }
     if (!drag || drag.pointerId !== event.pointerId) return;
     onChange(updateAnchor(curve, drag.id, drag.kind, pointerToLocal(event)));
   };
 
-  const endDrag = (event: PointerEvent<SVGSVGElement>) => {
+  const endPointer = (event: PointerEvent<SVGSVGElement>) => {
+    if (drawing && drawPointerId === event.pointerId) {
+      if (svgRef.current?.hasPointerCapture(event.pointerId)) svgRef.current.releasePointerCapture(event.pointerId);
+      const nextCurve = freehand.length >= 4 ? curveFromFreehand(freehand) : curve;
+      if (freehand.length >= 4) {
+        onChange(nextCurve);
+        setSelectedId(nextCurve.anchors[0]?.id ?? '');
+      }
+      setFreehand([]);
+      setDrawPointerId(undefined);
+      setDrawing(false);
+      return;
+    }
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (svgRef.current?.hasPointerCapture(event.pointerId)) svgRef.current.releasePointerCapture(event.pointerId);
     setDrag(undefined);
@@ -92,26 +124,31 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
     const next = cloneCurve(DEFAULT_BEZIER_CURVE);
     onChange(next);
     setSelectedId(next.anchors[0].id);
+    setDrawing(false);
+    setFreehand([]);
   };
+
+  const freehandPoints = freehand.map(svgPoint).map((item) => `${item.x},${item.y}`).join(' ');
 
   return (
     <section className="bezier-editor">
       <div className="bezier-editor-head">
         <div>
           <span className="eyebrow">VECTOR MASK EDITOR</span>
-          <strong>Closed cubic Bezier</strong>
+          <strong>{drawing ? 'Draw a closed silhouette' : 'Closed cubic Bezier'}</strong>
         </div>
         <span>{curve.anchors.length} anchors</span>
       </div>
 
       <svg
         ref={svgRef}
-        className="bezier-stage"
+        className={`bezier-stage ${drawing ? 'drawing' : ''}`}
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerDown={beginFreehand}
+        onPointerMove={movePointer}
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
       >
         <defs>
           <linearGradient id="bezier-mask-fill" x1="0" y1="0" x2="1" y2="1">
@@ -120,8 +157,9 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
           </linearGradient>
         </defs>
         <path d={d} className="bezier-shape" />
+        {freehandPoints && <polyline points={freehandPoints} className="bezier-freehand" />}
 
-        {curve.anchors.map((anchor) => {
+        {!drawing && curve.anchors.map((anchor) => {
           const p = svgPoint(anchor.point);
           const incoming = svgPoint(anchor.handleIn);
           const outgoing = svgPoint(anchor.handleOut);
@@ -149,10 +187,12 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
       </svg>
 
       <div className="bezier-toolbar">
-        <button type="button" onClick={addAnchor} disabled={curve.anchors.length >= 10}><Plus size={14} /> Add</button>
-        <button type="button" onClick={deleteAnchor} disabled={curve.anchors.length <= 3}><Trash2 size={14} /> Delete</button>
+        <button type="button" className={drawing ? 'selected' : ''} onClick={() => { setDrawing((value) => !value); setFreehand([]); }}><Pencil size={14} /> Draw</button>
+        <button type="button" onClick={addAnchor} disabled={drawing || curve.anchors.length >= 10}><Plus size={14} /> Add</button>
+        <button type="button" onClick={deleteAnchor} disabled={drawing || curve.anchors.length <= 3}><Trash2 size={14} /> Delete</button>
         <button
           type="button"
+          disabled={drawing}
           className={selected?.linked ? 'selected' : ''}
           onClick={() => selected && onChange(setAnchorLinked(curve, selected.id, !selected.linked))}
         >
@@ -161,7 +201,7 @@ export default function BezierMaskEditor({ curve, onChange }: Props) {
         </button>
         <button type="button" onClick={reset}><RotateCcw size={14} /> Reset</button>
       </div>
-      <p className="panel-note">Drag anchors to reshape the mask. Select an anchor to expose its two cubic control handles. Linked handles mirror around the anchor; switch to Free for asymmetric curves.</p>
+      <p className="panel-note">Use Draw for a fast silhouette: the stroke is resampled into a small editable cubic curve. Then drag anchors or handles for precise cleanup. Linked handles stay tangent; Free handles allow asymmetric corners.</p>
     </section>
   );
 }
