@@ -1,5 +1,7 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
+import { cloneScene, createDefaultScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import { getSceneState, replaceScene } from './sceneStore';
 import {
   PRESETS,
   type BezierCurve,
@@ -36,15 +38,20 @@ export interface ProjectSnapshot {
     transitionType: EffectTransitionType;
     transitionDurationMs: number;
   };
+  scene?: {
+    enabled: boolean;
+    graph: MaskSceneGraph;
+  };
   motion?: MotionTrack;
 }
 
-type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask'> & {
+type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask' | 'scene'> & {
   mask: Omit<ProjectSnapshot['mask'], 'customCurve' | 'customFeather' | 'customExpansion'> & {
     customCurve?: BezierCurve;
     customFeather?: number;
     customExpansion?: number;
   };
+  scene?: ProjectSnapshot['scene'];
 };
 
 const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
@@ -54,6 +61,7 @@ const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'gl
 const EFFECT_TYPES: EffectNodeType[] = ['rgbSplit', 'ripple', 'pixelate', 'distortion'];
 const BLEND_MODES: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 const GESTURE_STATES: GestureState[] = ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'];
+const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'custom'] as const;
 
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -187,8 +195,59 @@ function sanitizeMotion(value: unknown): MotionTrack | undefined {
   return { version: 1, duration, keyframes };
 }
 
+function sanitizeSceneGeometry(value: unknown): SceneMaskGeometry {
+  try {
+    const item = object(value);
+    const kind = enumValue(item.kind, SCENE_GEOMETRY, 'portal');
+    if (kind !== 'custom') return { kind };
+    return {
+      kind: 'custom',
+      curve: sanitizeCurve(item.curve),
+      feather: clamp(finite(item.feather, 0.006), 0, 0.08),
+      expansion: clamp(finite(item.expansion, 0), -0.45, 0.45),
+    };
+  } catch {
+    return { kind: 'portal' };
+  }
+}
+
+function sanitizeScene(value: unknown): { enabled: boolean; graph: MaskSceneGraph } | undefined {
+  if (!value) return undefined;
+  try {
+    const container = object(value);
+    const graphRaw = object(container.graph);
+    const rawNodes = Array.isArray(graphRaw.nodes) ? graphRaw.nodes : [];
+    const nodes = rawNodes.slice(0, 4).flatMap((raw, index): SceneMaskNode[] => {
+      try {
+        const item = object(raw);
+        return [{
+          id: typeof item.id === 'string' && item.id ? item.id : `mask-import-${index}`,
+          name: typeof item.name === 'string' && item.name ? item.name.slice(0, 80) : `Mask ${index + 1}`,
+          visible: bool(item.visible, true),
+          locked: bool(item.locked, false),
+          transform: sanitizeTransform(item.transform),
+          geometry: sanitizeSceneGeometry(item.geometry),
+          effects: sanitizeEffects(item.effects),
+        }];
+      } catch {
+        return [];
+      }
+    });
+    if (!nodes.length) return undefined;
+    const selectedCandidate = typeof graphRaw.selectedMaskId === 'string' ? graphRaw.selectedMaskId : undefined;
+    const selectedMaskId = nodes.some((node) => node.id === selectedCandidate) ? selectedCandidate : nodes[0].id;
+    return {
+      enabled: bool(container.enabled, false),
+      graph: { version: 1, selectedMaskId, nodes },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnapshot {
   const bezierState = getBezierMaskState();
+  const sceneState = getSceneState();
   const customCurve = input.mask.customCurve ?? bezierState.curve;
   return {
     version: 1,
@@ -205,6 +264,10 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
     effects: {
       ...input.effects,
       effectStack: input.effects.effectStack.map((node) => ({ ...node })),
+    },
+    scene: input.scene ?? {
+      enabled: sceneState.enabled,
+      graph: cloneScene(sceneState.scene),
     },
     motion: input.motion ? {
       version: 1,
@@ -244,6 +307,10 @@ export function parseProject(text: string): ProjectSnapshot {
     expansion: customExpansion,
   });
 
+  const scene = sanitizeScene(root.scene);
+  if (scene) replaceScene(scene.graph, scene.enabled);
+  else replaceScene(createDefaultScene(), false);
+
   return {
     version: 1,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : new Date().toISOString(),
@@ -263,6 +330,7 @@ export function parseProject(text: string): ProjectSnapshot {
       transitionType: enumValue(carousel.transitionType, TRANSITIONS, 'crossFade'),
       transitionDurationMs: clamp(finite(carousel.transitionDurationMs, 650), 80, 5000),
     },
+    scene,
     motion: sanitizeMotion(root.motion),
   };
 }
