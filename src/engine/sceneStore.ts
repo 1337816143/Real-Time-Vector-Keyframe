@@ -1,5 +1,6 @@
+import { cloneCurve } from './bezier';
 import { cloneScene, createCustomSceneNode, createDefaultScene, createSceneMaskNode, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
-import { PRESETS, type EffectSettings, type MaskTransform, type PresetId } from './types';
+import { PRESETS, type BezierCurve, type EffectSettings, type MaskTransform, type PresetId } from './types';
 
 export interface RealtimeSceneState {
   enabled: boolean;
@@ -96,23 +97,44 @@ export function updateMask(id: string, patch: Partial<Pick<SceneMaskNode, 'name'
   emit();
 }
 
-export function setMaskPreset(id: string, preset: PresetId) {
+export function setMaskEffectPreset(id: string, preset: PresetId) {
   const source = PRESETS[preset];
-  const geometry: SceneMaskGeometry = source.mask === 'circle' || source.mask === 'blob' || source.mask === 'portal'
-    ? { kind: source.mask }
-    : state.scene.nodes.find((node) => node.id === id)?.geometry ?? { kind: 'portal' };
   state = {
     ...state,
     scene: {
       ...state.scene,
       nodes: state.scene.nodes.map((node) => node.id === id ? {
         ...node,
-        geometry,
         effects: {
           ...source.effects,
           effectStack: source.effects.effectStack.map((effect) => ({ ...effect })),
         },
       } : node),
+    },
+  };
+  emit();
+}
+
+export function setCustomMaskGeometry(
+  id: string,
+  patch: Partial<{ curve: BezierCurve; feather: number; expansion: number }>,
+) {
+  state = {
+    ...state,
+    scene: {
+      ...state.scene,
+      nodes: state.scene.nodes.map((node) => {
+        if (node.id !== id || node.geometry.kind !== 'custom') return node;
+        return {
+          ...node,
+          geometry: {
+            kind: 'custom',
+            curve: patch.curve ? cloneCurve(patch.curve) : node.geometry.curve,
+            feather: Math.min(0.08, Math.max(0, patch.feather ?? node.geometry.feather)),
+            expansion: Math.min(0.45, Math.max(-0.45, patch.expansion ?? node.geometry.expansion)),
+          },
+        };
+      }),
     },
   };
   emit();
