@@ -1,5 +1,6 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
+import { getEffectSequenceTrack, replaceEffectSequence, type EffectSequenceTrack } from './effectSequence';
 import { cloneScene, createDefaultScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
 import { sceneMotionRecorder, type SceneMotionEasing, type SceneMotionTrack } from './sceneMotion';
 import { getSceneState, replaceScene } from './sceneStore';
@@ -45,9 +46,10 @@ export interface ProjectSnapshot {
   };
   motion?: MotionTrack;
   sceneMotion?: SceneMotionTrack;
+  effectSequence?: EffectSequenceTrack;
 }
 
-type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask' | 'scene' | 'sceneMotion'> & {
+type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask' | 'scene' | 'sceneMotion' | 'effectSequence'> & {
   mask: Omit<ProjectSnapshot['mask'], 'customCurve' | 'customFeather' | 'customExpansion'> & {
     customCurve?: BezierCurve;
     customFeather?: number;
@@ -55,6 +57,7 @@ type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask'
   };
   scene?: ProjectSnapshot['scene'];
   sceneMotion?: SceneMotionTrack;
+  effectSequence?: EffectSequenceTrack;
 };
 
 const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
@@ -66,6 +69,7 @@ const BLEND_MODES: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 const GESTURE_STATES: GestureState[] = ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'];
 const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'custom'] as const;
 const SCENE_EASINGS: SceneMotionEasing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
+const PRESET_IDS = Object.keys(PRESETS) as PresetId[];
 
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -310,6 +314,48 @@ function sanitizeSceneMotion(value: unknown): SceneMotionTrack | undefined {
   }
 }
 
+function sanitizeEffectSequence(
+  value: unknown,
+  sceneMotion?: SceneMotionTrack,
+  scene?: { enabled: boolean; graph: MaskSceneGraph },
+): EffectSequenceTrack | undefined {
+  if (!value) return undefined;
+  try {
+    const item = object(value);
+    const rawClips = Array.isArray(item.clips) ? item.clips : [];
+    const nodeIds = new Set((sceneMotion?.template ?? scene?.graph)?.nodes.map((node) => node.id) ?? []);
+    const duration = sceneMotion?.duration ?? Infinity;
+    const clips = rawClips.slice(0, 32).flatMap((raw, index) => {
+      try {
+        const clip = object(raw);
+        const maskId = typeof clip.maskId === 'string' ? clip.maskId : '';
+        if (!maskId || (nodeIds.size > 0 && !nodeIds.has(maskId))) return [];
+        const startMs = clamp(finite(clip.startMs, 0), 0, Number.isFinite(duration) ? Math.max(0, duration - 1) : Number.MAX_SAFE_INTEGER);
+        const endLimit = Number.isFinite(duration) ? duration : Number.MAX_SAFE_INTEGER;
+        const endMs = clamp(finite(clip.endMs, startMs + 1000), startMs + 1, endLimit);
+        const span = Math.max(1, endMs - startMs);
+        return [{
+          id: typeof clip.id === 'string' && clip.id ? clip.id.slice(0, 120) : `seq-import-${index}`,
+          name: typeof clip.name === 'string' && clip.name ? clip.name.slice(0, 80) : `Effect Clip ${index + 1}`,
+          enabled: bool(clip.enabled, true),
+          maskId,
+          startMs,
+          endMs,
+          fadeInMs: clamp(finite(clip.fadeInMs, 0), 0, span),
+          fadeOutMs: clamp(finite(clip.fadeOutMs, 0), 0, span),
+          presetId: enumValue(clip.presetId, PRESET_IDS, 'cyber'),
+          intensity: clamp(finite(clip.intensity, 1), 0, 2),
+        }];
+      } catch {
+        return [];
+      }
+    });
+    return { version: 1, clips };
+  } catch {
+    return undefined;
+  }
+}
+
 export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnapshot {
   const bezierState = getBezierMaskState();
   const sceneState = getSceneState();
@@ -348,6 +394,7 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
       })),
     } : undefined,
     sceneMotion: input.sceneMotion ?? sceneMotionRecorder.getTrack(),
+    effectSequence: input.effectSequence ?? getEffectSequenceTrack(),
   };
 }
 
@@ -380,6 +427,9 @@ export function parseProject(text: string): ProjectSnapshot {
   const sceneMotion = sanitizeSceneMotion(root.sceneMotion);
   sceneMotionRecorder.loadTrack(sceneMotion);
 
+  const effectSequence = sanitizeEffectSequence(root.effectSequence, sceneMotion, scene);
+  replaceEffectSequence(effectSequence);
+
   return {
     version: 1,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : new Date().toISOString(),
@@ -402,5 +452,6 @@ export function parseProject(text: string): ProjectSnapshot {
     scene,
     motion: sanitizeMotion(root.motion),
     sceneMotion,
+    effectSequence,
   };
 }
