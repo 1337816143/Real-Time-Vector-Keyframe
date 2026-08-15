@@ -22,6 +22,8 @@ export function installCustomMaskRuntime() {
         ...state,
         maskType: 'custom',
         customMask: sampleClosedCurve(bezier.curve, 64),
+        customFeather: bezier.feather,
+        customExpansion: bezier.expansion,
       };
       return originalRender.call(this, camera, alternate, customState);
     }
@@ -31,6 +33,8 @@ export function installCustomMaskRuntime() {
         ...state,
         maskType: 'portal',
         customMask: undefined,
+        customFeather: undefined,
+        customExpansion: undefined,
       });
     }
 
