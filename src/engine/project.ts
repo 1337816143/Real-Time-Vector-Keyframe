@@ -1,7 +1,7 @@
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
 import { cloneScene, createDefaultScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
-import { sceneMotionRecorder, type SceneMotionTrack } from './sceneMotion';
+import { sceneMotionRecorder, type SceneMotionEasing, type SceneMotionTrack } from './sceneMotion';
 import { getSceneState, replaceScene } from './sceneStore';
 import {
   PRESETS,
@@ -65,6 +65,7 @@ const EFFECT_TYPES: EffectNodeType[] = ['rgbSplit', 'ripple', 'pixelate', 'disto
 const BLEND_MODES: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
 const GESTURE_STATES: GestureState[] = ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'];
 const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'custom'] as const;
+const SCENE_EASINGS: SceneMotionEasing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
 
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -281,7 +282,11 @@ function sanitizeSceneMotion(value: unknown): SceneMotionTrack | undefined {
             const frame = object(rawFrame);
             const node = sanitizeSceneNode(frame.node, frameIndex, maskId);
             if (!node) return [];
-            return [{ t: Math.max(0, finite(frame.t, 0)), node }];
+            return [{
+              t: Math.max(0, finite(frame.t, 0)),
+              node,
+              easing: enumValue(frame.easing, SCENE_EASINGS, 'linear'),
+            }];
           } catch {
             return [];
           }
