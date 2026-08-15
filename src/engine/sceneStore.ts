@@ -99,6 +99,10 @@ export function updateMask(id: string, patch: Partial<Pick<SceneMaskNode, 'name'
 
 export function setMaskEffectPreset(id: string, preset: PresetId) {
   const source = PRESETS[preset];
+  setMaskEffects(id, source.effects);
+}
+
+export function setMaskEffects(id: string, effects: EffectSettings) {
   state = {
     ...state,
     scene: {
@@ -106,8 +110,8 @@ export function setMaskEffectPreset(id: string, preset: PresetId) {
       nodes: state.scene.nodes.map((node) => node.id === id ? {
         ...node,
         effects: {
-          ...source.effects,
-          effectStack: source.effects.effectStack.map((effect) => ({ ...effect })),
+          ...effects,
+          effectStack: effects.effectStack.map((effect) => ({ ...effect })),
         },
       } : node),
     },
