@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ArrowDown, ArrowUp, Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import EffectSequenceTimeline from './EffectSequenceTimeline';
 import {
   addEffectSequenceClip,
   getEffectSequencePreviewTime,
@@ -26,6 +27,16 @@ export default function EffectSequenceEditor() {
   const duration = motion?.duration ?? 0;
 
   useEffect(() => subscribeEffectSequence(() => setSequence(getEffectSequenceTrack())), []);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (sceneMotionRecorder.isPlaying()) setPreviewMs(sceneMotionRecorder.getCurrentTime());
+      else {
+        const external = getEffectSequencePreviewTime();
+        setPreviewMs((current) => Math.abs(current - external) > 0.5 ? external : current);
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const preview = (timeMs: number) => {
     if (!motion) return;
@@ -61,6 +72,15 @@ export default function EffectSequenceEditor() {
             <span><b>Preview time</b><code>{(previewMs / 1000).toFixed(2)} / {(duration / 1000).toFixed(2)} s</code></span>
             <input type="range" min={0} max={duration} step={10} value={Math.min(duration, previewMs)} onChange={(event) => preview(Number(event.target.value))} />
           </div>
+
+          <EffectSequenceTimeline
+            duration={duration}
+            previewMs={previewMs}
+            clips={sequence.clips}
+            nodes={sceneState.scene.nodes}
+            onPreview={preview}
+            onUpdate={updateEffectSequenceClip}
+          />
 
           <button type="button" className="effect-sequence-add" disabled={sequence.clips.length >= 32} onClick={addClip}>
             <Plus size={13} /> Add clip at playhead
@@ -148,7 +168,7 @@ export default function EffectSequenceEditor() {
         </>
       )}
 
-      <p className="panel-note">Clips are evaluated in list order. Fade weight blends numeric Effect/Temporal parameters and effect-node opacity on a render-only copy of the target mask. Transform, geometry and stored Scene Motion keyframes are untouched.</p>
+      <p className="panel-note">Drag a clip body to move it and drag either edge to resize it. Sliders remain available for precise values. Clips are evaluated in list order and modify only render-time Effect/Temporal/Edge settings; Transform, geometry and Scene Motion keys are untouched.</p>
     </section>
   );
 }
