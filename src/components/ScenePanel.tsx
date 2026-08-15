@@ -19,6 +19,7 @@ import SceneMotionControls from './SceneMotionControls';
 import './ScenePanel.css';
 import {
   addMask,
+  clearTrailGeometry,
   getSceneState,
   moveMask,
   removeMask,
@@ -67,7 +68,7 @@ export default function ScenePanel() {
         <div className="scene-panel-body">
           <div className="scene-add-row">
             <span>Add</span>
-            {(['circle', 'blob', 'portal', 'custom'] as const).map((kind) => (
+            {(['circle', 'blob', 'portal', 'trail', 'custom'] as const).map((kind) => (
               <button key={kind} type="button" disabled={topologyLocked || state.scene.nodes.length >= 4} onClick={() => addMask(kind)}>
                 <Plus size={11} /> {kind}
               </button>
@@ -83,7 +84,7 @@ export default function ScenePanel() {
                     <span className="scene-node-index">{String(index + 1).padStart(2, '0')}</span>
                     <span>
                       <b>{node.name}</b>
-                      <small>{node.geometry.kind} · {node.effects.effectStack.filter((effect) => effect.enabled).length} FX</small>
+                      <small>{node.geometry.kind}{node.geometry.kind === 'trail' ? ` · ${node.geometry.points.length} pts` : ''} · {node.effects.effectStack.filter((effect) => effect.enabled).length} FX</small>
                     </span>
                   </button>
                   <div className="scene-node-actions">
@@ -105,12 +106,14 @@ export default function ScenePanel() {
                   <span className="eyebrow">SELECTED MASK</span>
                   <strong>{selected.name}</strong>
                 </div>
-                <span>{selected.locked ? 'Gesture transform locked' : 'Pinch controls this node'}</span>
+                <span>{selected.geometry.kind === 'trail'
+                  ? selected.locked ? 'Trail locked' : 'Pinch draws · two hands transform'
+                  : selected.locked ? 'Gesture transform locked' : 'Pinch controls this node'}</span>
               </div>
 
               <label className="scene-preset-select">
                 <span>Effect preset</span>
-                <select key={selected.id} defaultValue="multiverse" onChange={(event) => setMaskEffectPreset(selected.id, event.target.value as PresetId)}>
+                <select key={selected.id} defaultValue={selected.geometry.kind === 'trail' ? 'slash' : 'multiverse'} onChange={(event) => setMaskEffectPreset(selected.id, event.target.value as PresetId)}>
                   {EFFECT_PRESETS.map((id) => <option key={id} value={id}>{PRESETS[id].label}</option>)}
                 </select>
               </label>
@@ -124,6 +127,22 @@ export default function ScenePanel() {
               </div>
 
               <EffectStackEditor effects={selected.effects} onChange={(effects) => setMaskEffects(selected.id, effects)} />
+
+              {selected.geometry.kind === 'trail' && (
+                <div className="scene-custom-editor">
+                  <div className="scene-selected-head">
+                    <div>
+                      <span className="eyebrow">VECTOR TRAIL PATH</span>
+                      <strong>{selected.geometry.points.length} local points</strong>
+                    </div>
+                    <span>Single-hand Pinch redraws</span>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => clearTrailGeometry(selected.id)}>
+                    <Trash2 size={13} /> Clear trail path
+                  </button>
+                  <p className="panel-note">The path is stored in node-local coordinates. Draw with one pinching hand; use two pinching hands to move, scale or rotate the completed Trail as one Scene node.</p>
+                </div>
+              )}
 
               {selected.geometry.kind === 'custom' && (
                 <div className="scene-custom-editor">
@@ -161,7 +180,7 @@ export default function ScenePanel() {
           <SceneMotionControls onBusyChange={setMotionBusy} />
           <EffectSequenceEditor />
 
-          <p className="panel-note">Scene order runs from bottom to top. Every visible node gets its own Source → Effect Stack → Mask Composite GPU passes. Scene Motion locks structural edits while recording/playback; Effect Sequence overlays render-only Effects without rewriting motion keys.</p>
+          <p className="panel-note">Scene order runs from bottom to top. Circle / Blob / Portal / Custom / Trail nodes all participate in the same GPU Scene, Motion lanes, Effect Sequence and recording pipeline.</p>
         </div>
       )}
     </aside>
