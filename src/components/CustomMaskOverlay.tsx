@@ -10,10 +10,14 @@ import {
   setCustomMaskEnabled,
   subscribeBezierMask,
 } from '../engine/bezierStore';
+import { getSceneState, subscribeScene } from '../engine/sceneStore';
 
 export default function CustomMaskOverlay() {
   const state = useSyncExternalStore(subscribeBezierMask, getBezierMaskState, getBezierMaskState);
+  const sceneState = useSyncExternalStore(subscribeScene, getSceneState, getSceneState);
   const [open, setOpen] = useState(false);
+
+  if (sceneState.enabled) return null;
 
   return (
     <aside className={`custom-mask-overlay glass-panel ${open ? 'open' : ''}`}>
