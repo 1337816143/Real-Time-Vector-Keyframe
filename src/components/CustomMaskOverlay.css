@@ -65,10 +65,53 @@
   box-shadow: 0 0 0 4px rgba(106, 229, 183, .08), 0 0 12px rgba(106, 229, 183, .35);
 }
 
-.custom-mask-overlay .bezier-editor {
+.custom-mask-editor-body {
+  display: grid;
+  gap: 8px;
   margin-top: 8px;
-  max-height: min(64vh, 520px);
+  max-height: min(66vh, 590px);
   overflow: auto;
+}
+
+.custom-mask-overlay .bezier-editor {
+  margin: 0;
+}
+
+.custom-mask-range {
+  display: grid;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid rgba(160, 212, 243, .11);
+  border-radius: 11px;
+  background: rgba(5, 12, 21, .34);
+}
+
+.custom-mask-range > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-mask-range b {
+  font-size: 10px;
+  color: rgba(229, 246, 255, .82);
+}
+
+.custom-mask-range code {
+  font-size: 9px;
+  color: rgba(135, 218, 255, .78);
+}
+
+.custom-mask-range small {
+  font-size: 8px;
+  line-height: 1.45;
+  color: rgba(185, 213, 230, .44);
+}
+
+.custom-mask-range input[type='range'] {
+  width: 100%;
+  accent-color: currentColor;
 }
 
 @media (max-width: 680px) {
@@ -80,7 +123,11 @@
   }
 
   .custom-mask-overlay.open {
-    max-height: 67vh;
+    max-height: 70vh;
     overflow: auto;
+  }
+
+  .custom-mask-editor-body {
+    max-height: none;
   }
 }
