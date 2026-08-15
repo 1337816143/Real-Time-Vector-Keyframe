@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, Radio, Repeat2, Rewind, RotateCcw, Save, Square, Trash2 } from 'lucide-react';
+import { setEffectSequencePreviewTime } from '../engine/effectSequence';
 import {
   sceneMotionRecorder,
   type SceneMotionEasing,
@@ -38,6 +39,7 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
     setRecording(sceneMotionRecorder.isRecording());
     setPlaying(sceneMotionRecorder.isPlaying());
     setProgress(0);
+    setEffectSequencePreviewTime(0);
     setSelectedKey(undefined);
     setRange(sceneMotionRecorder.getPlaybackRange());
     wasPlayingRef.current = sceneMotionRecorder.isPlaying();
@@ -70,6 +72,7 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
     setSelectedKey(undefined);
     setRange({ inMs: 0, outMs: 0 });
     setProgress(0);
+    setEffectSequencePreviewTime(0);
     setRecording(true);
     setPlaying(false);
   };
@@ -80,6 +83,7 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
     setRange(sceneMotionRecorder.getPlaybackRange());
     setRecording(false);
     setProgress(0);
+    setEffectSequencePreviewTime(0);
   };
 
   const play = (nextMode: PlaybackMode) => {
@@ -106,6 +110,7 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
     setRecording(false);
     setPlaying(false);
     setProgress(0);
+    setEffectSequencePreviewTime(0);
     wasPlayingRef.current = false;
   };
 
@@ -115,8 +120,10 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
     if (!currentTrack) return;
     sceneMotionRecorder.stopPlayback();
     const normalized = Math.min(1, Math.max(0, nextProgress));
-    const sampled = sceneMotionRecorder.sampleAt(currentTrack.duration * normalized);
+    const timeMs = currentTrack.duration * normalized;
+    const sampled = sceneMotionRecorder.sampleAt(timeMs);
     if (sampled) replaceScene(sampled, true);
+    setEffectSequencePreviewTime(timeMs);
     setPlaying(false);
     wasPlayingRef.current = false;
     setProgress(normalized);
@@ -128,7 +135,10 @@ export default function SceneMotionControls({ onBusyChange }: { onBusyChange?: (
       refreshTrack();
       const nextTrack = sceneMotionRecorder.getTrack();
       const nextFrame = nextTrack?.lanes.find((lane) => lane.maskId === selection.maskId)?.keyframes[selection.index];
-      if (nextTrack && nextFrame) setProgress(nextFrame.t / nextTrack.duration);
+      if (nextTrack && nextFrame) {
+        setProgress(nextFrame.t / nextTrack.duration);
+        setEffectSequencePreviewTime(nextFrame.t);
+      }
     }
   };
 
