@@ -1,3 +1,4 @@
+import { applyEffectSequence, effectSequenceRenderTime } from './effectSequence';
 import { getSceneState } from './sceneStore';
 import { VfxRenderer } from './renderer';
 import type { RenderState } from './types';
@@ -17,6 +18,8 @@ export function installSceneRuntime() {
     const sceneState = getSceneState();
     const visible = sceneState.scene.nodes.some((node) => node.visible);
     if (!sceneState.enabled || !visible) return fallbackRender.call(this, camera, alternate, state);
-    return this.renderScene(camera, alternate, state, sceneState.scene.nodes);
+    const timeMs = effectSequenceRenderTime(state.time);
+    const nodes = applyEffectSequence(sceneState.scene.nodes, timeMs);
+    return this.renderScene(camera, alternate, state, nodes);
   };
 }
