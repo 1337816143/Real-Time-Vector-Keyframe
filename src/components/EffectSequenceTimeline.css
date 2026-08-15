@@ -1,0 +1,135 @@
+.effect-sequence-timeline {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid rgba(154, 211, 241, .09);
+  border-radius: 10px;
+  background: rgba(3, 10, 18, .34);
+}
+
+.effect-sequence-ruler {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 80px;
+  color: rgba(170, 211, 233, .38);
+  font: 7px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.effect-sequence-lanes {
+  display: grid;
+  gap: 5px;
+}
+
+.effect-sequence-lane {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.effect-sequence-lane-label {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.effect-sequence-lane-label b {
+  overflow: hidden;
+  color: rgba(226, 243, 252, .68);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.effect-sequence-lane-label span {
+  color: rgba(169, 210, 231, .38);
+  font-size: 7px;
+}
+
+.effect-sequence-lane-track {
+  position: relative;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(154, 211, 241, .08);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, transparent 24.5%, rgba(151, 205, 236, .05) 25%, transparent 25.5%, transparent 49.5%, rgba(151, 205, 236, .05) 50%, transparent 50.5%, transparent 74.5%, rgba(151, 205, 236, .05) 75%, transparent 75.5%),
+    rgba(255, 255, 255, .016);
+  touch-action: none;
+}
+
+.effect-sequence-bar {
+  position: absolute;
+  z-index: 3;
+  top: 4px;
+  bottom: 4px;
+  min-width: 10px;
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr) 5px;
+  overflow: hidden;
+  border: 1px solid rgba(95, 216, 255, .34);
+  border-radius: 5px;
+  background: linear-gradient(90deg, rgba(49, 164, 215, .36), rgba(94, 102, 240, .28));
+  box-shadow: 0 0 10px rgba(61, 190, 241, .12);
+}
+
+.effect-sequence-bar.disabled {
+  opacity: .38;
+}
+
+.effect-sequence-bar button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  touch-action: none;
+}
+
+.effect-sequence-handle {
+  cursor: ew-resize;
+  background: rgba(217, 248, 255, .38) !important;
+}
+
+.effect-sequence-handle:hover {
+  background: rgba(242, 253, 255, .78) !important;
+}
+
+.effect-sequence-bar-body {
+  overflow: hidden;
+  cursor: grab;
+}
+
+.effect-sequence-bar-body:active {
+  cursor: grabbing;
+}
+
+.effect-sequence-bar-body span {
+  display: block;
+  overflow: hidden;
+  padding: 0 4px;
+  color: rgba(238, 251, 255, .8);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.effect-sequence-playhead {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(243, 252, 255, .95);
+  box-shadow: 0 0 5px rgba(109, 219, 255, .58);
+  transform: translateX(-.5px);
+  pointer-events: none;
+}
+
+@media (max-width: 680px) {
+  .effect-sequence-ruler { padding-left: 64px; }
+  .effect-sequence-lane { grid-template-columns: 56px minmax(0, 1fr); gap: 6px; }
+}
