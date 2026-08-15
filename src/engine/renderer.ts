@@ -1,3 +1,5 @@
+import { sampleClosedCurve } from './bezier';
+import type { SceneMaskNode } from './scene';
 import type {
   EffectBlendMode,
   EffectNodeType,
@@ -147,12 +149,14 @@ precision highp float;
 in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uCamera;
+uniform sampler2D uBase;
 uniform sampler2D uEffect;
 uniform sampler2D uPreviousEffect;
 uniform vec2 uViewport;
 uniform vec2 uCameraSize;
 uniform float uTime;
 uniform float uMirror;
+uniform float uUseBase;
 uniform vec2 uMaskCenter;
 uniform float uMaskScale;
 uniform float uMaskRotation;
@@ -322,7 +326,8 @@ vec3 transitionEffect(vec2 uv) {
 }
 
 void main() {
-  vec3 base = texture(uCamera, cameraUv(vUv)).rgb;
+  vec3 cameraBase = texture(uCamera, cameraUv(vUv)).rgb;
+  vec3 base = uUseBase > 0.5 ? texture(uBase, clamp(vUv, vec2(0.001), vec2(0.999))).rgb : cameraBase;
   vec3 effect = transitionEffect(vUv);
   float sd = maskSdf(vUv);
   float defaultFeather = 0.0045 + min(uHandSpeed, 2.0) * 0.0015;
@@ -450,6 +455,8 @@ export class VfxRenderer {
   private vao: WebGLVertexArrayObject;
   private ping: RenderTarget;
   private pong: RenderTarget;
+  private sceneA: RenderTarget;
+  private sceneB: RenderTarget;
   private transitionSnapshot: RenderTarget;
   private lastProcessedTarget?: RenderTarget;
   private transitionStart = 0;
@@ -474,6 +481,8 @@ export class VfxRenderer {
     this.history = Array.from({ length: 15 }, () => ({ texture: createTexture(gl), timestamp: 0, initialized: false }));
     this.ping = this.createRenderTarget();
     this.pong = this.createRenderTarget();
+    this.sceneA = this.createRenderTarget();
+    this.sceneB = this.createRenderTarget();
     this.transitionSnapshot = this.createRenderTarget();
     const vao = gl.createVertexArray();
     if (!vao) throw new Error('Unable to create VAO');
@@ -581,6 +590,8 @@ export class VfxRenderer {
     }
     this.resizeTarget(this.ping, width, height);
     this.resizeTarget(this.pong, width, height);
+    this.resizeTarget(this.sceneA, width, height);
+    this.resizeTarget(this.sceneB, width, height);
     const snapshotChanged = this.resizeTarget(this.transitionSnapshot, width, height);
     if (canvasChanged || snapshotChanged) this.transitionStart = 0;
   }
@@ -604,6 +615,15 @@ export class VfxRenderer {
       size[0] = source.width || size[0];
       size[1] = source.height || size[1];
     }
+    return true;
+  }
+
+  private prepareFrame(camera: HTMLVideoElement, alternate: TexImageSource | undefined, now: number) {
+    if (camera.readyState < 2) return false;
+    this.resize();
+    this.upload(this.cameraTexture, camera, this.cameraSize);
+    this.upload(this.alternateTexture, alternate ?? camera, this.altSize);
+    this.captureHistory(camera, now);
     return true;
   }
 
@@ -697,18 +717,27 @@ export class VfxRenderer {
     return progress;
   }
 
-  private renderComposite(state: RenderState, effectTarget: RenderTarget) {
+  private renderComposite(
+    state: RenderState,
+    effectTarget: RenderTarget,
+    framebuffer: WebGLFramebuffer | null = null,
+    baseTexture?: WebGLTexture,
+    allowTransition = true,
+  ) {
     const gl = this.gl;
     const program = this.compositeProgram;
-    const progress = this.transitionProgress(state.time);
-    const transitioning = this.transitionStart > 0 || progress < 1;
+    const progress = allowTransition ? this.transitionProgress(state.time) : 1;
+    const transitioning = allowTransition && (this.transitionStart > 0 || progress < 1);
     gl.useProgram(program);
     this.bindTexture(0, this.cameraTexture);
     this.bindTexture(1, effectTarget.texture);
     this.bindTexture(2, transitioning ? this.transitionSnapshot.texture : effectTarget.texture);
+    this.bindTexture(3, baseTexture ?? this.cameraTexture);
     gl.uniform1i(this.uniform(program, 'uCamera'), 0);
     gl.uniform1i(this.uniform(program, 'uEffect'), 1);
     gl.uniform1i(this.uniform(program, 'uPreviousEffect'), 2);
+    gl.uniform1i(this.uniform(program, 'uBase'), 3);
+    gl.uniform1f(this.uniform(program, 'uUseBase'), baseTexture ? 1 : 0);
     gl.uniform2f(this.uniform(program, 'uViewport'), this.canvas.width, this.canvas.height);
     gl.uniform2f(this.uniform(program, 'uCameraSize'), this.cameraSize[0], this.cameraSize[1]);
     gl.uniform1f(this.uniform(program, 'uTime'), state.time / 1000);
@@ -749,16 +778,28 @@ export class VfxRenderer {
     });
     gl.uniform1i(this.uniform(program, 'uCustomCount'), custom.length);
     gl.uniform2fv(this.uniform(program, 'uCustom[0]'), customFlat);
-    this.drawTo(null);
+    this.drawTo(framebuffer);
+  }
+
+  private stateForSceneNode(base: RenderState, node: SceneMaskNode): RenderState {
+    const geometry = node.geometry;
+    return {
+      ...base,
+      transform: { ...node.transform },
+      effects: {
+        ...node.effects,
+        effectStack: node.effects.effectStack.map((effect) => ({ ...effect })),
+      },
+      maskType: geometry.kind,
+      trail: [],
+      customMask: geometry.kind === 'custom' ? sampleClosedCurve(geometry.curve, 64) : undefined,
+      customFeather: geometry.kind === 'custom' ? geometry.feather : undefined,
+      customExpansion: geometry.kind === 'custom' ? geometry.expansion : undefined,
+    };
   }
 
   render(camera: HTMLVideoElement, alternate: TexImageSource | undefined, state: RenderState) {
-    if (camera.readyState < 2) return;
-    this.resize();
-    this.upload(this.cameraTexture, camera, this.cameraSize);
-    this.upload(this.alternateTexture, alternate ?? camera, this.altSize);
-    this.captureHistory(camera, state.time);
-
+    if (!this.prepareFrame(camera, alternate, state.time)) return;
     const historyA = this.historyTexture(state.time, state.effects.temporalDelayMs);
     const historyB = this.historyTexture(state.time, Math.min(2100, state.effects.temporalDelayMs * 1.65 + 180));
     this.renderSource(state, historyA, historyB);
@@ -767,12 +808,45 @@ export class VfxRenderer {
     this.renderComposite(state, processed);
   }
 
+  renderScene(camera: HTMLVideoElement, alternate: TexImageSource | undefined, baseState: RenderState, nodes: SceneMaskNode[]) {
+    if (!this.prepareFrame(camera, alternate, baseState.time)) return;
+    const visible = nodes.filter((node) => node.visible).slice(0, 4);
+    if (!visible.length) {
+      this.render(camera, alternate, baseState);
+      return;
+    }
+
+    let accumulated: RenderTarget | undefined;
+    let writeTarget = this.sceneA;
+
+    visible.forEach((node, index) => {
+      const state = this.stateForSceneNode(baseState, node);
+      const historyA = this.historyTexture(state.time, state.effects.temporalDelayMs);
+      const historyB = this.historyTexture(state.time, Math.min(2100, state.effects.temporalDelayMs * 1.65 + 180));
+      this.renderSource(state, historyA, historyB);
+      const processed = this.renderEffects(state);
+      this.lastProcessedTarget = processed;
+      const last = index === visible.length - 1;
+      this.renderComposite(
+        state,
+        processed,
+        last ? null : writeTarget.framebuffer,
+        accumulated?.texture,
+        false,
+      );
+      if (!last) {
+        accumulated = writeTarget;
+        writeTarget = writeTarget === this.sceneA ? this.sceneB : this.sceneA;
+      }
+    });
+  }
+
   dispose() {
     const gl = this.gl;
     gl.deleteTexture(this.cameraTexture);
     gl.deleteTexture(this.alternateTexture);
     this.history.forEach((slot) => gl.deleteTexture(slot.texture));
-    for (const target of [this.ping, this.pong, this.transitionSnapshot]) {
+    for (const target of [this.ping, this.pong, this.sceneA, this.sceneB, this.transitionSnapshot]) {
       gl.deleteTexture(target.texture);
       gl.deleteFramebuffer(target.framebuffer);
     }
