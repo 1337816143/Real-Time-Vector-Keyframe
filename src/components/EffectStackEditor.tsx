@@ -1,15 +1,24 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, Power } from 'lucide-react';
-import type { EffectBlendMode, EffectNode, EffectSettings } from '../engine/types';
+import type { EdgeFxMode, EffectBlendMode, EffectNode, EffectSettings } from '../engine/types';
 import './effect-stack.css';
 
 const BLENDS: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
+const EDGE_MODES: EdgeFxMode[] = ['none', 'neon', 'scanner', 'electric', 'particle'];
 
 const LABELS: Record<EffectNode['type'], string> = {
   rgbSplit: 'RGB Split',
   ripple: 'Ripple',
   pixelate: 'Pixelate',
   distortion: 'Distortion',
+};
+
+const EDGE_LABELS: Record<EdgeFxMode, string> = {
+  none: 'Off',
+  neon: 'Neon',
+  scanner: 'Scanner',
+  electric: 'Electric',
+  particle: 'Particle',
 };
 
 function replaceNode(settings: EffectSettings, id: string, patch: Partial<EffectNode>): EffectSettings {
@@ -35,6 +44,7 @@ export default function EffectStackEditor({
   }, [effects.effectStack, selectedId]);
 
   const selected = effects.effectStack.find((node) => node.id === selectedId);
+  const edgeMode = effects.edgeFxMode ?? 'neon';
 
   const move = (id: string, delta: -1 | 1) => {
     const index = effects.effectStack.findIndex((node) => node.id === id);
@@ -109,7 +119,43 @@ export default function EffectStackEditor({
         </div>
       )}
 
-      <p className="panel-note">Each enabled row is a separate WebGL render pass. Reordering nodes changes which texture the next shader receives, so the result is materially order-dependent.</p>
+      <div className="effect-node-detail">
+        <div className="stack-heading">
+          <span className="eyebrow">EDGE FX · STANDALONE PASS</span>
+          <small>{EDGE_LABELS[edgeMode]}</small>
+        </div>
+        <div className="segmented-grid effect-blends">
+          {EDGE_MODES.map((mode) => (
+            <button
+              key={mode}
+              className={edgeMode === mode ? 'selected' : ''}
+              onClick={() => onChange({ ...effects, edgeFxMode: mode })}
+            >{EDGE_LABELS[mode]}</button>
+          ))}
+        </div>
+        {edgeMode !== 'none' && (
+          <>
+            <StackRange
+              label="Edge speed"
+              value={effects.edgeFxSpeed ?? 1}
+              min={0.1}
+              max={2.5}
+              step={0.05}
+              onChange={(value) => onChange({ ...effects, edgeFxSpeed: value })}
+            />
+            <StackRange
+              label="Edge density"
+              value={effects.edgeFxDensity ?? 1}
+              min={0.25}
+              max={2.5}
+              step={0.05}
+              onChange={(value) => onChange({ ...effects, edgeFxDensity: value })}
+            />
+          </>
+        )}
+      </div>
+
+      <p className="panel-note">Ordered effect rows run before masking. Edge FX is a separate final WebGL pass on the same recordable canvas, so changing Neon / Scanner / Electric / Particle does not reorder or contaminate the texture effect graph.</p>
     </section>
   );
 }
