@@ -2,9 +2,12 @@ import { cloneCurve } from './bezier';
 import { cloneMaskNode, cloneScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
 import type { EffectSettings, MaskTransform, PlaybackMode } from './types';
 
+export type SceneMotionEasing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+
 export interface SceneMotionKeyframe {
   t: number;
   node: SceneMaskNode;
+  easing?: SceneMotionEasing;
 }
 
 export interface SceneMotionLane {
@@ -20,7 +23,21 @@ export interface SceneMotionTrack {
   lanes: SceneMotionLane[];
 }
 
+export interface SceneMotionPlaybackRange {
+  inMs: number;
+  outMs: number;
+}
+
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+function applyEasing(t: number, easing: SceneMotionEasing = 'linear') {
+  const x = clamp01(t);
+  if (easing === 'easeIn') return x * x;
+  if (easing === 'easeOut') return 1 - (1 - x) * (1 - x);
+  if (easing === 'easeInOut') return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+  return x;
+}
 
 function lerpAngle(a: number, b: number, t: number) {
   let delta = b - a;
@@ -191,7 +208,11 @@ function cloneTrack(track: SceneMotionTrack): SceneMotionTrack {
     lanes: track.lanes.map((lane) => ({
       maskId: lane.maskId,
       name: lane.name,
-      keyframes: lane.keyframes.map((frame) => ({ t: frame.t, node: cloneMaskNode(frame.node) })),
+      keyframes: lane.keyframes.map((frame) => ({
+        t: frame.t,
+        node: cloneMaskNode(frame.node),
+        easing: frame.easing ?? 'linear',
+      })),
     })),
   };
 }
@@ -206,7 +227,7 @@ function sampleLane(lane: SceneMotionLane, time: number): SceneMaskNode | undefi
   const a = frames[right - 1];
   const b = frames[right];
   const span = Math.max(1, b.t - a.t);
-  const mix = Math.min(1, Math.max(0, (time - a.t) / span));
+  const mix = applyEasing((time - a.t) / span, a.easing ?? 'linear');
   return interpolateNode(a.node, b.node, mix);
 }
 
@@ -220,19 +241,22 @@ export class SceneMotionRecorder {
   private working = new Map<string, SceneMotionLane>();
   private lastCaptureAt = new Map<string, number>();
   private track?: SceneMotionTrack;
+  private playbackRange: SceneMotionPlaybackRange = { inMs: 0, outMs: 0 };
 
   start(scene: MaskSceneGraph, now = performance.now()) {
     this.recording = true;
     this.playing = false;
+    this.track = undefined;
     this.recordStartedAt = now;
     this.template = cloneScene(scene);
     this.working.clear();
     this.lastCaptureAt.clear();
+    this.playbackRange = { inMs: 0, outMs: 0 };
     for (const node of scene.nodes) {
       this.working.set(node.id, {
         maskId: node.id,
         name: node.name,
-        keyframes: [{ t: 0, node: cloneMaskNode(node) }],
+        keyframes: [{ t: 0, node: cloneMaskNode(node), easing: 'linear' }],
       });
       this.lastCaptureAt.set(node.id, now);
     }
@@ -248,7 +272,7 @@ export class SceneMotionRecorder {
       const previous = lane.keyframes[lane.keyframes.length - 1]?.node;
       const elapsed = now - (this.lastCaptureAt.get(node.id) ?? -Infinity);
       if (!previous || elapsed >= 180 || (elapsed >= 32 && meaningfulNodeChange(previous, node))) {
-        lane.keyframes.push({ t, node: cloneMaskNode(node) });
+        lane.keyframes.push({ t, node: cloneMaskNode(node), easing: 'linear' });
         this.lastCaptureAt.set(node.id, now);
       }
     }
@@ -260,10 +284,14 @@ export class SceneMotionRecorder {
     this.recording = false;
     const duration = Math.max(1, now - this.recordStartedAt);
     const lanes = [...this.working.values()].map((lane) => {
-      const keyframes = lane.keyframes.map((frame) => ({ t: frame.t, node: cloneMaskNode(frame.node) }));
+      const keyframes = lane.keyframes.map((frame) => ({
+        t: frame.t,
+        node: cloneMaskNode(frame.node),
+        easing: frame.easing ?? 'linear' as SceneMotionEasing,
+      }));
       const last = keyframes[keyframes.length - 1];
-      if (last && last.t < duration) keyframes.push({ t: duration, node: cloneMaskNode(last.node) });
-      if (keyframes.length === 1) keyframes.push({ t: duration, node: cloneMaskNode(keyframes[0].node) });
+      if (last && last.t < duration) keyframes.push({ t: duration, node: cloneMaskNode(last.node), easing: 'linear' });
+      if (keyframes.length === 1) keyframes.push({ t: duration, node: cloneMaskNode(keyframes[0].node), easing: 'linear' });
       return { maskId: lane.maskId, name: lane.name, keyframes };
     });
     this.track = {
@@ -272,6 +300,7 @@ export class SceneMotionRecorder {
       template: cloneScene(this.template),
       lanes,
     };
+    this.playbackRange = { inMs: 0, outMs: duration };
     this.working.clear();
     this.lastCaptureAt.clear();
     return this.getTrack();
@@ -284,6 +313,7 @@ export class SceneMotionRecorder {
     this.working.clear();
     this.lastCaptureAt.clear();
     this.track = undefined;
+    this.playbackRange = { inMs: 0, outMs: 0 };
   }
 
   loadTrack(track?: SceneMotionTrack) {
@@ -293,7 +323,62 @@ export class SceneMotionRecorder {
     this.working.clear();
     this.lastCaptureAt.clear();
     this.track = track ? cloneTrack(track) : undefined;
+    this.playbackRange = this.track
+      ? { inMs: 0, outMs: this.track.duration }
+      : { inMs: 0, outMs: 0 };
     return this.getTrack();
+  }
+
+  updateKeyframe(maskId: string, index: number, node: SceneMaskNode) {
+    if (!this.track || this.recording || this.playing) return false;
+    const lane = this.track.lanes.find((item) => item.maskId === maskId);
+    const frame = lane?.keyframes[index];
+    if (!lane || !frame || node.id !== maskId) return false;
+    frame.node = cloneMaskNode(node);
+    lane.name = node.name;
+    return true;
+  }
+
+  deleteKeyframe(maskId: string, index: number) {
+    if (!this.track || this.recording || this.playing) return false;
+    const lane = this.track.lanes.find((item) => item.maskId === maskId);
+    if (!lane || lane.keyframes.length <= 2 || index <= 0 || index >= lane.keyframes.length - 1) return false;
+    lane.keyframes.splice(index, 1);
+    return true;
+  }
+
+  setKeyframeEasing(maskId: string, index: number, easing: SceneMotionEasing) {
+    if (!this.track || this.recording || this.playing) return false;
+    const frame = this.track.lanes.find((item) => item.maskId === maskId)?.keyframes[index];
+    if (!frame) return false;
+    frame.easing = easing;
+    return true;
+  }
+
+  retimeKeyframe(maskId: string, index: number, nextTime: number) {
+    if (!this.track || this.recording || this.playing) return false;
+    const lane = this.track.lanes.find((item) => item.maskId === maskId);
+    if (!lane || index <= 0 || index >= lane.keyframes.length - 1) return false;
+    const previous = lane.keyframes[index - 1];
+    const next = lane.keyframes[index + 1];
+    lane.keyframes[index].t = Math.min(next.t - 1, Math.max(previous.t + 1, nextTime));
+    return true;
+  }
+
+  setPlaybackRange(inMs: number, outMs: number) {
+    if (!this.track) return;
+    const duration = this.track.duration;
+    const nextIn = Math.min(duration, Math.max(0, inMs));
+    const nextOut = Math.min(duration, Math.max(nextIn + 1, outMs));
+    this.playbackRange = { inMs: nextIn, outMs: nextOut };
+  }
+
+  getPlaybackRange(): SceneMotionPlaybackRange {
+    if (!this.track) return { inMs: 0, outMs: 0 };
+    const outMs = this.playbackRange.outMs > this.playbackRange.inMs
+      ? this.playbackRange.outMs
+      : this.track.duration;
+    return { inMs: this.playbackRange.inMs, outMs };
   }
 
   play(mode: PlaybackMode = 'loop', now = performance.now()) {
@@ -324,27 +409,36 @@ export class SceneMotionRecorder {
   private resolveTime(now: number) {
     const track = this.track;
     if (!track || track.duration <= 0) return 0;
+    const range = this.getPlaybackRange();
+    const start = range.inMs;
+    const end = Math.max(start + 1, range.outMs);
+    const duration = end - start;
     const elapsed = Math.max(0, now - this.playbackStartedAt);
-    const duration = track.duration;
+
     if (this.playbackMode === 'once') {
       if (elapsed >= duration) {
         this.playing = false;
-        return duration;
+        return end;
       }
-      return elapsed;
+      return start + elapsed;
     }
     if (this.playbackMode === 'reverse') {
       if (elapsed >= duration) {
         this.playing = false;
-        return 0;
+        return start;
       }
-      return duration - elapsed;
+      return end - elapsed;
     }
     if (this.playbackMode === 'pingpong') {
       const phase = elapsed % (duration * 2);
-      return phase <= duration ? phase : duration * 2 - phase;
+      return phase <= duration ? start + phase : end - (phase - duration);
     }
-    return elapsed % duration;
+    return start + (elapsed % duration);
+  }
+
+  getCurrentTime(now = performance.now()) {
+    if (!this.track) return 0;
+    return this.playing ? this.resolveTime(now) : this.getPlaybackRange().inMs;
   }
 
   getProgress(now = performance.now()) {
