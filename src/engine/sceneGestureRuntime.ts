@@ -1,6 +1,12 @@
 import { GestureController } from './gesture';
 import { sceneMotionRecorder } from './sceneMotion';
-import { getSceneState, selectedMask, setMaskTransformSilently } from './sceneStore';
+import {
+  appendTrailPointSilently,
+  clearTrailGeometry,
+  getSceneState,
+  selectedMask,
+  setMaskTransformSilently,
+} from './sceneStore';
 
 let installed = false;
 
@@ -13,17 +19,33 @@ export function installSceneGestureRuntime() {
     const sceneState = getSceneState();
     const selected = selectedMask();
     const scenePlayback = sceneMotionRecorder.isPlaying();
+    const editable = sceneState.enabled && selected && !selected.locked && !scenePlayback;
+    const selectedTrail = editable && selected.geometry.kind === 'trail';
+    const baseTransform = selectedTrail ? { ...selected.transform } : undefined;
 
-    if (sceneState.enabled && selected && !selected.locked && !scenePlayback) {
-      this.setTransform(selected.transform);
+    if (editable) this.setTransform(selected.transform);
+
+    const runtimeArgs = [...args] as Parameters<GestureController['update']>;
+    if (selectedTrail) runtimeArgs[1] = true;
+    const result = originalUpdate.apply(this, runtimeArgs);
+
+    if (!editable || !selected) return result;
+
+    if (selectedTrail && baseTransform) {
+      if (result.pinchStarted) clearTrailGeometry(selected.id, false);
+
+      if (result.state === 'TWO_HAND_TRANSFORM') {
+        setMaskTransformSilently(selected.id, result.transform);
+        return result;
+      }
+
+      if (result.trailPoint) appendTrailPointSilently(selected.id, result.trailPoint);
+      this.setTransform(baseTransform);
+      result.transform = { ...baseTransform };
+      return result;
     }
 
-    const result = originalUpdate.apply(this, args);
-
-    if (sceneState.enabled && selected && !selected.locked && !scenePlayback) {
-      setMaskTransformSilently(selected.id, result.transform);
-    }
-
+    setMaskTransformSilently(selected.id, result.transform);
     return result;
   };
 }
