@@ -1,4 +1,5 @@
 import { Download, FileJson, Upload } from 'lucide-react';
+import { notifySceneMotionTrackChanged } from '../engine/sceneMotionEvents';
 import './project-controls.css';
 
 export default function ProjectControls({
@@ -29,14 +30,15 @@ export default function ProjectControls({
           type="file"
           accept=".json,application/json"
           onChange={(event) => {
-            void onImport(event.target.files?.[0]);
+            const file = event.target.files?.[0];
+            void Promise.resolve(onImport(file)).finally(() => notifySceneMotionTrackChanged());
             event.currentTarget.value = '';
           }}
         />
       </label>
       {message && <p className="project-message" role="status">{message}</p>}
       <p className="panel-note">
-        Project JSON stores mask transform, Effect Stack, Temporal FX, Carousel/transition settings and Motion Track. Uploaded image/video bytes stay local and are never embedded in the JSON.
+        Project JSON stores single-mask state, Multi-Mask Scene Graph, per-mask Effect Stacks, Temporal FX, Carousel/transition settings, Motion Track and Scene Motion lanes. Uploaded image/video bytes stay local and are never embedded in the JSON.
       </p>
     </section>
   );
