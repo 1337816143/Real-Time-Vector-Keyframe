@@ -7,6 +7,7 @@ import { getSceneState, replaceScene } from './sceneStore';
 import {
   PRESETS,
   type BezierCurve,
+  type EdgeFxMode,
   type EffectBlendMode,
   type EffectNodeType,
   type EffectSettings,
@@ -66,6 +67,7 @@ const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImag
 const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'glitch', 'flash', 'liquid'];
 const EFFECT_TYPES: EffectNodeType[] = ['rgbSplit', 'ripple', 'pixelate', 'distortion'];
 const BLEND_MODES: EffectBlendMode[] = ['normal', 'add', 'screen', 'multiply'];
+const EDGE_FX_MODES: EdgeFxMode[] = ['none', 'neon', 'scanner', 'electric', 'particle'];
 const GESTURE_STATES: GestureState[] = ['IDLE', 'HOVER', 'PINCH_START', 'GRABBED', 'DRAGGING', 'TWO_HAND_TRANSFORM', 'RELEASE', 'LOST'];
 const SCENE_GEOMETRY = ['circle', 'blob', 'portal', 'custom'] as const;
 const SCENE_EASINGS: SceneMotionEasing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
@@ -165,6 +167,9 @@ function sanitizeEffects(value: unknown): EffectSettings {
     pixelate: clamp(finite(item.pixelate, 0), 0, 240),
     distortion: clamp(finite(item.distortion, 0), 0, 0.2),
     glow: clamp(finite(item.glow, 0.8), 0, 3),
+    edgeFxMode: enumValue(item.edgeFxMode, EDGE_FX_MODES, 'neon'),
+    edgeFxSpeed: clamp(finite(item.edgeFxSpeed, 1), 0.05, 3),
+    edgeFxDensity: clamp(finite(item.edgeFxDensity, 1), 0.1, 3),
     invertMask: bool(item.invertMask),
     useAlternateMedia: bool(item.useAlternateMedia),
     temporalMode: enumValue(item.temporalMode, TEMPORAL_MODES, 'none'),
