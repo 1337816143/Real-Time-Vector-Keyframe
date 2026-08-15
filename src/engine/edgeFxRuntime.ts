@@ -1,7 +1,7 @@
 import { sampleClosedCurve } from './bezier';
 import { applyEffectSequence, effectSequenceRenderTime } from './effectSequence';
 import { VfxRenderer } from './renderer';
-import type { SceneMaskNode } from './scene';
+import { sceneTrailToWorld, type SceneMaskNode } from './scene';
 import { getSceneState } from './sceneStore';
 import type { EdgeFxMode, EffectSettings, RenderState, Vec2 } from './types';
 
@@ -331,6 +331,9 @@ function shapeFromState(state: RenderState): EdgeShape {
 
 function shapeFromNode(node: SceneMaskNode, base: RenderState, selectedMaskId?: string): EdgeShape {
   const custom = node.geometry.kind === 'custom' ? node.geometry : undefined;
+  const trail = node.geometry.kind === 'trail'
+    ? sceneTrailToWorld(node.geometry.points, node.transform).slice(-32)
+    : [];
   return {
     maskType: node.geometry.kind,
     x: node.transform.x,
@@ -339,7 +342,7 @@ function shapeFromNode(node: SceneMaskNode, base: RenderState, selectedMaskId?: 
     rotation: node.transform.rotation,
     handSpeed: node.id === selectedMaskId ? base.handSpeed : 0,
     effects: node.effects,
-    trail: [],
+    trail,
     customMask: custom ? sampleClosedCurve(custom.curve, 64) : undefined,
     customExpansion: custom?.expansion,
   };
