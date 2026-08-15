@@ -1,5 +1,6 @@
 import { cloneCurve } from './bezier';
 import { cloneScene, createCustomSceneNode, createDefaultScene, createSceneMaskNode, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import { sceneMotionRecorder } from './sceneMotion';
 import { PRESETS, type BezierCurve, type EffectSettings, type MaskTransform, type PresetId } from './types';
 
 export interface RealtimeSceneState {
@@ -25,6 +26,10 @@ function emit() {
   listeners.forEach((listener) => listener());
 }
 
+function topologyLocked() {
+  return sceneMotionRecorder.isRecording() || sceneMotionRecorder.isPlaying();
+}
+
 export function getSceneState(): RealtimeSceneState {
   return state;
 }
@@ -35,6 +40,7 @@ export function subscribeScene(listener: () => void) {
 }
 
 export function setSceneEnabled(enabled: boolean) {
+  if (!enabled && topologyLocked()) return;
   if (state.enabled === enabled) return;
   state = { ...state, enabled };
   emit();
@@ -54,7 +60,7 @@ export function selectMask(id: string) {
 }
 
 export function addMask(kind: SceneMaskGeometry['kind']) {
-  if (state.scene.nodes.length >= 4) return;
+  if (topologyLocked() || state.scene.nodes.length >= 4) return;
   const geometry: SceneMaskGeometry = kind === 'custom'
     ? createCustomSceneNode().geometry
     : { kind } as SceneMaskGeometry;
@@ -76,7 +82,7 @@ export function addMask(kind: SceneMaskGeometry['kind']) {
 }
 
 export function removeMask(id: string) {
-  if (state.scene.nodes.length <= 1) return;
+  if (topologyLocked() || state.scene.nodes.length <= 1) return;
   const index = state.scene.nodes.findIndex((node) => node.id === id);
   if (index < 0) return;
   const nodes = state.scene.nodes.filter((node) => node.id !== id);
@@ -89,6 +95,7 @@ export function removeMask(id: string) {
 }
 
 export function moveMask(id: string, direction: -1 | 1) {
+  if (topologyLocked()) return;
   const nodes = state.scene.nodes.slice();
   const index = nodes.findIndex((node) => node.id === id);
   const target = index + direction;
