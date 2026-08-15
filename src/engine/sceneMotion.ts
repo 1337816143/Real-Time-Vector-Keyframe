@@ -1,5 +1,12 @@
 import { cloneCurve } from './bezier';
-import { cloneMaskNode, cloneScene, type MaskSceneGraph, type SceneMaskGeometry, type SceneMaskNode } from './scene';
+import {
+  cloneMaskNode,
+  cloneScene,
+  type MaskSceneGraph,
+  type SceneMaskGeometry,
+  type SceneMaskNode,
+  type SceneTrailPoint,
+} from './scene';
 import type { EffectSettings, MaskTransform, PlaybackMode } from './types';
 
 export type SceneMotionEasing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
@@ -51,6 +58,10 @@ function cloneEffects(effects: EffectSettings): EffectSettings {
     ...effects,
     effectStack: effects.effectStack.map((node) => ({ ...node })),
   };
+}
+
+function cloneTrail(points: SceneTrailPoint[]) {
+  return points.map((point) => ({ ...point }));
 }
 
 function interpolateTransform(a: MaskTransform, b: MaskTransform, t: number): MaskTransform {
@@ -107,48 +118,66 @@ function compatibleCustomGeometry(a: SceneMaskGeometry, b: SceneMaskGeometry) {
     && a.curve.anchors.every((anchor, index) => anchor.id === b.curve.anchors[index]?.id);
 }
 
-function interpolateGeometry(a: SceneMaskGeometry, b: SceneMaskGeometry, t: number): SceneMaskGeometry {
-  if (!compatibleCustomGeometry(a, b)) {
-    const source = t < 0.5 ? a : b;
-    if (source.kind !== 'custom') return { kind: source.kind };
+function compatibleTrailGeometry(a: SceneMaskGeometry, b: SceneMaskGeometry) {
+  return a.kind === 'trail' && b.kind === 'trail' && a.points.length === b.points.length;
+}
+
+function interpolateTrail(a: SceneTrailPoint[], b: SceneTrailPoint[], t: number): SceneTrailPoint[] {
+  return a.map((point, index) => {
+    const next = b[index];
+    return {
+      x: lerp(point.x, next.x, t),
+      y: lerp(point.y, next.y, t),
+      width: lerp(point.width, next.width, t),
+    };
+  });
+}
+
+function cloneGeometry(geometry: SceneMaskGeometry): SceneMaskGeometry {
+  if (geometry.kind === 'custom') {
     return {
       kind: 'custom',
-      curve: cloneCurve(source.curve),
-      feather: source.feather,
-      expansion: source.expansion,
+      curve: cloneCurve(geometry.curve),
+      feather: geometry.feather,
+      expansion: geometry.expansion,
+    };
+  }
+  if (geometry.kind === 'trail') return { kind: 'trail', points: cloneTrail(geometry.points) };
+  return { kind: geometry.kind };
+}
+
+function interpolateGeometry(a: SceneMaskGeometry, b: SceneMaskGeometry, t: number): SceneMaskGeometry {
+  if (compatibleTrailGeometry(a, b)) {
+    const left = a as Extract<SceneMaskGeometry, { kind: 'trail' }>;
+    const right = b as Extract<SceneMaskGeometry, { kind: 'trail' }>;
+    return { kind: 'trail', points: interpolateTrail(left.points, right.points, t) };
+  }
+
+  if (compatibleCustomGeometry(a, b)) {
+    const left = a as Extract<SceneMaskGeometry, { kind: 'custom' }>;
+    const right = b as Extract<SceneMaskGeometry, { kind: 'custom' }>;
+    return {
+      kind: 'custom',
+      feather: lerp(left.feather, right.feather, t),
+      expansion: lerp(left.expansion, right.expansion, t),
+      curve: {
+        version: 1,
+        closed: true,
+        anchors: left.curve.anchors.map((anchor, index) => {
+          const next = right.curve.anchors[index];
+          return {
+            id: anchor.id,
+            linked: t < 0.5 ? anchor.linked : next.linked,
+            point: { x: lerp(anchor.point.x, next.point.x, t), y: lerp(anchor.point.y, next.point.y, t) },
+            handleIn: { x: lerp(anchor.handleIn.x, next.handleIn.x, t), y: lerp(anchor.handleIn.y, next.handleIn.y, t) },
+            handleOut: { x: lerp(anchor.handleOut.x, next.handleOut.x, t), y: lerp(anchor.handleOut.y, next.handleOut.y, t) },
+          };
+        }),
+      },
     };
   }
 
-  const left = a as Extract<SceneMaskGeometry, { kind: 'custom' }>;
-  const right = b as Extract<SceneMaskGeometry, { kind: 'custom' }>;
-  return {
-    kind: 'custom',
-    feather: lerp(left.feather, right.feather, t),
-    expansion: lerp(left.expansion, right.expansion, t),
-    curve: {
-      version: 1,
-      closed: true,
-      anchors: left.curve.anchors.map((anchor, index) => {
-        const next = right.curve.anchors[index];
-        return {
-          id: anchor.id,
-          linked: t < 0.5 ? anchor.linked : next.linked,
-          point: {
-            x: lerp(anchor.point.x, next.point.x, t),
-            y: lerp(anchor.point.y, next.point.y, t),
-          },
-          handleIn: {
-            x: lerp(anchor.handleIn.x, next.handleIn.x, t),
-            y: lerp(anchor.handleIn.y, next.handleIn.y, t),
-          },
-          handleOut: {
-            x: lerp(anchor.handleOut.x, next.handleOut.x, t),
-            y: lerp(anchor.handleOut.y, next.handleOut.y, t),
-          },
-        };
-      }),
-    },
-  };
+  return cloneGeometry(t < 0.5 ? a : b);
 }
 
 function interpolateNode(a: SceneMaskNode, b: SceneMaskNode, t: number): SceneMaskNode {
@@ -163,8 +192,19 @@ function interpolateNode(a: SceneMaskNode, b: SceneMaskNode, t: number): SceneMa
   };
 }
 
+function trailChanged(a: SceneTrailPoint[], b: SceneTrailPoint[]) {
+  if (a.length !== b.length) return true;
+  return a.some((point, index) => {
+    const next = b[index];
+    return !next
+      || Math.hypot(point.x - next.x, point.y - next.y) > 0.008
+      || Math.abs(point.width - next.width) > 0.008;
+  });
+}
+
 function geometryChanged(a: SceneMaskGeometry, b: SceneMaskGeometry) {
   if (a.kind !== b.kind) return true;
+  if (a.kind === 'trail' && b.kind === 'trail') return trailChanged(a.points, b.points);
   if (a.kind !== 'custom' || b.kind !== 'custom') return false;
   if (Math.abs(a.feather - b.feather) > 0.0005 || Math.abs(a.expansion - b.expansion) > 0.002) return true;
   if (a.curve.anchors.length !== b.curve.anchors.length) return true;
@@ -290,22 +330,17 @@ export class SceneMotionRecorder {
     this.recording = false;
     const duration = Math.max(1, now - this.recordStartedAt);
     const lanes = [...this.working.values()].map((lane) => {
-      const keyframes = lane.keyframes.map((frame) => ({
+      const keyframes: SceneMotionKeyframe[] = lane.keyframes.map((frame) => ({
         t: frame.t,
         node: cloneMaskNode(frame.node),
-        easing: frame.easing ?? 'linear' as SceneMotionEasing,
+        easing: frame.easing ?? 'linear',
       }));
       const last = keyframes[keyframes.length - 1];
       if (last && last.t < duration) keyframes.push({ t: duration, node: cloneMaskNode(last.node), easing: 'linear' });
       if (keyframes.length === 1) keyframes.push({ t: duration, node: cloneMaskNode(keyframes[0].node), easing: 'linear' });
       return { maskId: lane.maskId, name: lane.name, keyframes };
     });
-    this.track = {
-      version: 1,
-      duration,
-      template: cloneScene(this.template),
-      lanes,
-    };
+    this.track = { version: 1, duration, template: cloneScene(this.template), lanes };
     this.playbackRange = { inMs: 0, outMs: duration };
     this.working.clear();
     this.lastCaptureAt.clear();
@@ -329,9 +364,7 @@ export class SceneMotionRecorder {
     this.working.clear();
     this.lastCaptureAt.clear();
     this.track = track ? cloneTrack(track) : undefined;
-    this.playbackRange = this.track
-      ? { inMs: 0, outMs: this.track.duration }
-      : { inMs: 0, outMs: 0 };
+    this.playbackRange = this.track ? { inMs: 0, outMs: this.track.duration } : { inMs: 0, outMs: 0 };
     return this.getTrack();
   }
 
@@ -381,9 +414,7 @@ export class SceneMotionRecorder {
 
   getPlaybackRange(): SceneMotionPlaybackRange {
     if (!this.track) return { inMs: 0, outMs: 0 };
-    const outMs = this.playbackRange.outMs > this.playbackRange.inMs
-      ? this.playbackRange.outMs
-      : this.track.duration;
+    const outMs = this.playbackRange.outMs > this.playbackRange.inMs ? this.playbackRange.outMs : this.track.duration;
     return { inMs: this.playbackRange.inMs, outMs };
   }
 
