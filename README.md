@@ -4,11 +4,11 @@ A browser-based realtime VFX studio where hand landmarks manipulate GPU-composit
 
 Core interaction:
 
-**camera → hand tracking → gesture state machine → vector mask → GPU effect graph → temporal/motion system → recording**
+**camera → hand tracking → gesture state machine → vector / Bezier masks → per-mask GPU effect graph → temporal/motion system → recording**
 
-## Current baseline — v0.4 Vector Mask Editor
+## Current baseline — v0.5 Multi-Mask Scene
 
-The project now has a working realtime foundation plus the first editable vector-mask workflow. The editor is not a decorative SVG layer: its curve is sampled and fed into the WebGL mask composite used by the final recordable canvas.
+The project now supports both a lightweight single-mask workflow and a real ordered multi-mask GPU scene. Multi-Mask is not a UI-only layer list: every visible mask receives its own source/effect/composite passes and is composited over the previous scene result.
 
 ### Camera + gesture interaction
 
@@ -20,93 +20,155 @@ The project now has a working realtime foundation plus the first editable vector
 - Pinch hysteresis and short tracking-loss tolerance.
 - Velocity-aware drag smoothing.
 - Two-hand position / scale / rotation.
-- Swipe preset switching.
+- Swipe preset switching in the single-mask workflow.
+- In Scene mode the selected, unlocked mask reuses the same GestureController, so pinch / drag / two-hand transform manipulates that node rather than introducing a second gesture system.
 
-### GPU mask composite
+## GPU masks
 
-The core mask is rendered in WebGL2 / GLSL rather than CSS `clip-path`.
+The mask composite is rendered in WebGL2 / GLSL rather than CSS `clip-path`.
 
-Current masks:
+Single-mask modes:
 
 - Circle
 - Blob
 - Portal
 - Vector Trail / Vector Slash
-- **Custom closed Bezier mask**
+- Custom closed Bezier mask
 
-The Custom Mask uses the same transform path as the existing realtime masks, so hand gestures still move, scale and rotate the whole shape while the editor controls its local geometry.
+Scene-node geometry currently supports:
 
-### v0.4 Custom Bezier mask editor
+- Circle
+- Blob
+- Portal
+- Custom Bezier
 
-The Studio now exposes a dedicated Custom Mask editor overlay.
+Vector Trail remains available in the single-mask realtime/motion workflow and is not yet a persistent Scene Graph geometry type.
 
-- Cubic Bezier anchor model.
-- Two control handles per anchor.
-- Linked handles for mirrored tangency.
-- Free handles for asymmetric corners.
-- Drag anchors directly.
-- Drag incoming / outgoing control handles.
-- Add anchors with de Casteljau curve splitting so insertion preserves the existing shape.
-- Delete anchors while keeping a minimum valid closed curve.
-- Reset to the default closed curve.
-- Maximum anchor count keeps realtime editing predictable on mobile.
+## Custom Bezier editor
 
-#### Freehand → editable curve
+The SVG editor is only the authoring surface. The authored curve is sampled and fed into the same WebGL mask composite used by the final recordable canvas.
 
-The Draw mode is not stored as a dense raw stroke.
+- Cubic Bezier anchors.
+- Incoming / outgoing handles.
+- Linked tangency or asymmetric Free handles.
+- Anchor dragging.
+- Handle dragging.
+- de Casteljau insertion that preserves the current curve when adding a point.
+- Minimum three-anchor closed curve.
+- Reset to default geometry.
+- Local mask coordinates, so global hand transform stays separate from shape editing.
 
-1. Capture the freehand silhouette locally.
-2. Distance-filter redundant samples.
-3. Resample the closed path by arc length.
-4. Convert it to roughly 4–8 editable anchors.
-5. Estimate tangent handles from neighboring points.
-6. Continue editing the resulting cubic curve normally.
+### Freehand → editable curve
 
-This keeps the result both lightweight and editable.
+Draw mode converts a quick silhouette into a compact editable curve:
 
-#### WebGL custom-mask path
+1. capture freehand samples locally;
+2. remove redundant near-duplicate points;
+3. resample the closed polyline by arc length;
+4. reduce it to roughly 4–8 anchors;
+5. estimate smooth tangent handles from neighboring points;
+6. continue editing the resulting cubic curve.
 
-The Bezier curve is sampled to at most 64 boundary points for the renderer. GLSL then computes:
+Dense input strokes are therefore not stored as hundreds of permanent control points.
 
-- local mask-space transform;
+### Signed-distance Custom Mask
+
+A Bezier curve is sampled to at most 64 boundary points for realtime rendering. GLSL computes:
+
+- local transform;
 - nearest boundary-segment distance;
 - point-in-polygon inside/outside classification;
-- signed distance approximation for feathered compositing and edge glow.
+- signed distance approximation;
+- **Expansion** by directly offsetting the SDF zero contour;
+- **Feather** by changing the actual SDF blend band.
 
-The Custom Mask therefore works with the existing:
+Expansion and Feather are therefore not CSS blur/scale substitutes. Edge glow follows the shifted signed-distance boundary as well.
 
-- alternate world source;
-- Time Window / Echo / After Image;
-- ordered Effect Stack;
-- edge glow;
-- mask inversion;
-- preset transitions;
-- final canvas recording.
+## v0.5 Multi-Mask Scene Graph
 
-### True temporal VFX
+Scene mode currently supports up to four mask nodes so mobile GPU cost remains bounded while the architecture is proven.
 
-The renderer owns a real camera-history texture ring.
+Each node owns:
 
-- 15 historical textures.
-- Approximately 150 ms capture interval.
-- Roughly 2 seconds of history after warm-up.
-- Time Window.
-- Echo.
-- After Image.
-- Adjustable history delay and temporal mix.
+- stable mask ID;
+- display name;
+- visibility;
+- gesture-transform lock;
+- independent position / scale / rotation;
+- independent geometry;
+- independent Effect settings;
+- independent ordered Effect Stack;
+- for Custom nodes: independent Bezier curve, Feather and Expansion.
 
-### Ordered Effect Stack
+Scene controls:
 
-Each enabled effect node is a real WebGL render pass using ping-pong render targets.
+- enable / disable Scene mode;
+- select active mask;
+- add Circle / Blob / Portal / Custom masks;
+- delete masks while keeping at least one node;
+- show / hide nodes while keeping at least one visible layer;
+- lock / unlock gesture transform;
+- move layer up / down;
+- apply an Effect preset per mask;
+- tune RGB Split, Ripple, Pixelate, Distortion and Edge Glow per mask;
+- reorder / enable / disable Effect Stack nodes per mask;
+- adjust per-effect Intensity, Opacity and Blend Mode;
+- fully edit Custom geometry inside the selected scene node.
 
-Current nodes:
+### Scene GPU pipeline
+
+For N visible masks the renderer performs the equivalent of:
+
+```text
+Camera / History / Alternate media
+        ↓
+Mask 1 Source Pass
+        ↓
+Mask 1 ordered Effect Stack
+        ↓
+Mask 1 Composite → Scene RT A
+        ↓
+Mask 2 Source Pass
+        ↓
+Mask 2 ordered Effect Stack
+        ↓
+Composite over Scene RT A → Scene RT B
+        ↓
+...
+        ↓
+Last Mask Composite → final canvas
+```
+
+The existing effect ping-pong targets are separate from the scene accumulation render targets. Scene composition is therefore not implemented as DOM opacity layers or multiple HTML canvases.
+
+The final result still lands on the same WebGL canvas used by `MediaRecorder`, so Multi-Mask output is included in recordings.
+
+## Temporal VFX
+
+The renderer owns a real camera-history texture ring:
+
+- 15 historical textures;
+- approximately 150 ms capture interval;
+- roughly 2 seconds of warmed history;
+- Time Window;
+- Echo;
+- After Image;
+- adjustable history delay and temporal mix.
+
+In Scene mode every mask node carries its own Effect settings, including Temporal configuration, while sharing the camera-history pool.
+
+## Ordered Effect Stack
+
+Every enabled Effect node is a real WebGL pass using ping-pong render targets.
+
+Current Effect nodes:
 
 - RGB Split
 - Ripple
 - Pixelate
 - Distortion
 
-Per-node controls:
+Per-effect controls:
 
 - Enable / Disable
 - Reorder
@@ -114,11 +176,11 @@ Per-node controls:
 - Opacity
 - Blend Mode: Normal / Add / Screen / Multiply
 
-Effect order materially changes the rendered output.
+Effect ordering materially changes the rendered output. Scene masks each own their own stack.
 
-### GPU transitions + Carousel
+## GPU transitions + Carousel
 
-Preset changes snapshot the previous processed GPU texture and transition to the new result in the final render path.
+Single-mask preset changes can snapshot the previous processed GPU texture and transition into the new result.
 
 Transitions:
 
@@ -128,9 +190,11 @@ Transitions:
 - Flash
 - Liquid
 
-The same transition system is used for manual changes, swipe changes and automatic Carousel playback.
+The same transition system is used for manual preset changes, swipe changes and automatic Carousel playback.
 
-### Vector Trail lifecycle
+Scene mode currently prioritizes deterministic ordered multi-mask compositing and does not yet run independent transition timelines for each scene node.
+
+## Vector Trail lifecycle
 
 Vector Trail is an independent realtime engine with:
 
@@ -151,11 +215,9 @@ Release modes:
 - Burst
 - Shrink
 
-### Motion Recording + automatic keyframes
+## Motion Recording + automatic keyframes
 
-Motion capture is separate from final video capture.
-
-Recorded state includes transform, mask type, Effect settings/stack, Temporal settings, gesture state, velocity and interaction point.
+The existing single-mask Motion system records transform, mask type, Effect settings/stack, Temporal settings, gesture state, velocity and interaction point.
 
 Playback:
 
@@ -164,57 +226,74 @@ Playback:
 - Reverse
 - Ping Pong
 
-The Motion panel also provides a scrubbable visual timeline that evaluates the same interpolation path as playback.
+A scrubbable timeline evaluates the same interpolation path as playback.
 
-### Project JSON
+**Scene-wide multi-mask keyframing is not claimed as complete yet.** Scene nodes render and respond to live gesture selection, but recording simultaneous independent node timelines is a later milestone.
 
-Project import/export stores:
+## Project JSON
 
-- preset;
-- mask type and transform;
+Project import/export remains schema version 1 and is backward-compatible with older v0.3/v0.4 files.
+
+It now stores:
+
+- single-mask preset/type/transform;
 - Vector Trail release mode;
-- **Custom Bezier anchors and handles**;
+- Custom Bezier anchors/handles;
+- single-mask Feather / Expansion;
 - ordered Effect Stack;
 - Temporal settings;
 - Carousel / transition settings;
-- Motion Track and keyframes.
+- Motion Track / keyframes;
+- **optional Multi-Mask Scene Graph**;
+- Scene enabled state;
+- node ordering / selection;
+- per-node visibility / lock;
+- per-node transform;
+- per-node geometry;
+- per-node Effects / Effect Stack;
+- per-node Custom Bezier / Feather / Expansion.
 
-Older v0.3 project files without `customCurve` remain valid and fall back to the default Bezier shape.
+Files without `customCurve`, Feather/Expansion or `scene` fields receive safe defaults. Imported scenes are validated, capped to four nodes and repaired to keep at least one visible layer.
 
-Uploaded image/video binary data is intentionally not embedded in project JSON.
+Uploaded image/video binary data is intentionally not embedded in JSON.
 
-### Final video recording
+## Recording
 
 - `canvas.captureStream()` + `MediaRecorder`.
-- Records the final WebGL composite.
-- Includes masks, temporal FX, Effect Stack and GPU transitions.
-- UI/debug overlays are excluded.
+- Records the final WebGL canvas.
+- Includes masks, Temporal FX, Effect Stack, Custom SDF geometry and Multi-Mask scene compositing.
+- Studio UI/debug overlays are excluded.
 
 ## Architecture
 
 ```text
 React controls
     │
-    ├── CustomMaskOverlay
-    │       └── BezierMaskEditor
-    │               └── Bezier store
+    ├── ScenePanel
+    │       ├── Scene Store
+    │       ├── selected-mask EffectStackEditor
+    │       └── selected Custom BezierMaskEditor
+    │
+    ├── CustomMaskOverlay (single-mask mode)
+    │       └── Bezier Store
     │
     └── Studio realtime loop
             ├── HandTracker
             ├── GestureController
+            │       └── Scene gesture adapter when Scene mode is active
             ├── VectorTrail
             ├── MotionRecorder
             └── VfxRenderer
-                    ├── current camera texture
+                    ├── camera / alternate textures
                     ├── camera-history ring
-                    ├── temporal source pass
-                    ├── ordered Effect Stack
-                    ├── GPU transition snapshot
-                    ├── procedural / trail / custom mask SDF
+                    ├── source pass
+                    ├── per-mask ordered Effect Stack
+                    ├── scene accumulation RT A / B
+                    ├── procedural / trail / custom SDF
                     └── final recordable canvas
 ```
 
-High-frequency motion stays out of React state. The Bezier editor changes authored geometry at UI frequency; the renderer samples the shared curve state only for the realtime mask boundary it needs.
+High-frequency Scene transforms are updated silently in the realtime store rather than pushed through React every animation frame. React handles authored configuration, selection and low-frequency control state.
 
 ## Main source files
 
@@ -223,6 +302,7 @@ src/
 ├── App.tsx
 ├── components/
 │   ├── Studio.tsx
+│   ├── ScenePanel.tsx
 │   ├── CustomMaskOverlay.tsx
 │   ├── BezierMaskEditor.tsx
 │   ├── EffectStackEditor.tsx
@@ -234,6 +314,10 @@ src/
     ├── bezier.ts
     ├── bezierStore.ts
     ├── customMaskRuntime.ts
+    ├── scene.ts
+    ├── sceneStore.ts
+    ├── sceneGestureRuntime.ts
+    ├── sceneRuntime.ts
     ├── motion.ts
     ├── project.ts
     ├── trail.ts
@@ -260,21 +344,22 @@ Camera access requires `https://` or localhost in normal browser deployment.
 
 The following remain future work rather than placeholder UI:
 
-- Per-mask Feather / Expansion controls.
-- Multi-mask scene graph with independent transforms and Effect Stacks.
-- Bezier geometry keyframing over time.
-- Authored effect Sequence editor with explicit time ranges.
+- Multi-mask Motion Track / geometry keyframing.
+- Keyframed Bezier anchor/handle animation.
+- Independent per-scene-node transition timelines.
+- Vector Trail as a persistent Scene Graph node.
+- Authored Effect Sequence editor with explicit time ranges.
 - Advanced Edge FX families such as electric arcs, fire, ice, particles and scanner.
 - WebGPU enhancement path.
 - Web Worker / OffscreenCanvas renderer split.
 - Full real-device profiling matrix across Android Chrome, iOS Safari and desktop Chromium.
 
-## Next milestone — v0.4 continuation / v0.5 Multi-Mask
+## Next milestone — v0.6 Scene Motion
 
-1. Add Feather / Expansion to Custom Mask signed-distance processing.
-2. Move Custom Mask controls into the main Mask panel once the single-mask editor is stable.
-3. Introduce a scene graph containing multiple mask nodes.
-4. Give every mask node its own transform, geometry and Effect Stack reference.
-5. Add mask selection / visibility / ordering controls.
-6. Extend project JSON while preserving the current single-mask schema as a migration path.
-7. Profile mobile GPU cost before increasing mask count or shader complexity.
+1. Extend MotionTrack from one mask state to multiple node tracks.
+2. Record selected-mask transforms without losing independent node identities.
+3. Add node-specific timeline lanes.
+4. Keyframe Custom Bezier geometry with sparse change detection.
+5. Add Scene playback / Loop / Reverse / Ping Pong while preserving current single-mask files.
+6. Add Scene-level transitions only after timeline ownership is explicit.
+7. Profile 1 / 2 / 3 / 4 mask GPU cost on Android Chrome, iOS Safari and desktop Chromium before increasing the scene cap.
