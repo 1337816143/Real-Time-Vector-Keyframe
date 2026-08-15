@@ -13,6 +13,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import BezierMaskEditor from './BezierMaskEditor';
+import EffectStackEditor from './EffectStackEditor';
 import './ScenePanel.css';
 import {
   addMask,
@@ -22,6 +23,7 @@ import {
   selectMask,
   setCustomMaskGeometry,
   setMaskEffectPreset,
+  setMaskEffects,
   setSceneEnabled,
   subscribeScene,
   updateMask,
@@ -97,15 +99,25 @@ export default function ScenePanel() {
                   <span className="eyebrow">SELECTED MASK</span>
                   <strong>{selected.name}</strong>
                 </div>
-                <span>Pinch controls this node</span>
+                <span>{selected.locked ? 'Gesture transform locked' : 'Pinch controls this node'}</span>
               </div>
 
               <label className="scene-preset-select">
                 <span>Effect preset</span>
-                <select defaultValue="multiverse" onChange={(event) => setMaskEffectPreset(selected.id, event.target.value as PresetId)}>
+                <select key={selected.id} defaultValue="multiverse" onChange={(event) => setMaskEffectPreset(selected.id, event.target.value as PresetId)}>
                   {EFFECT_PRESETS.map((id) => <option key={id} value={id}>{PRESETS[id].label}</option>)}
                 </select>
               </label>
+
+              <div className="scene-effect-amounts">
+                <SceneRange label="RGB split" value={selected.effects.rgbSplit} min={0} max={0.04} step={0.001} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, rgbSplit: value })} />
+                <SceneRange label="Ripple" value={selected.effects.ripple} min={0} max={0.06} step={0.002} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, ripple: value })} />
+                <SceneRange label="Pixelate" value={selected.effects.pixelate} min={0} max={120} step={4} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, pixelate: value })} />
+                <SceneRange label="Distortion" value={selected.effects.distortion} min={0} max={0.06} step={0.002} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, distortion: value })} />
+                <SceneRange label="Edge glow" value={selected.effects.glow} min={0} max={1.8} step={0.05} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, glow: value })} />
+              </div>
+
+              <EffectStackEditor effects={selected.effects} onChange={(effects) => setMaskEffects(selected.id, effects)} />
 
               {selected.geometry.kind === 'custom' && (
                 <div className="scene-custom-editor">
@@ -144,5 +156,28 @@ export default function ScenePanel() {
         </div>
       )}
     </aside>
+  );
+}
+
+function SceneRange({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="scene-range">
+      <span><b>{label}</b><code>{step >= 1 ? value.toFixed(0) : value.toFixed(3)}</code></span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
   );
 }
