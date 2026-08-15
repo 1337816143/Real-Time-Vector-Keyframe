@@ -1,5 +1,7 @@
+import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import {
   PRESETS,
+  type BezierCurve,
   type EffectBlendMode,
   type EffectNodeType,
   type EffectSettings,
@@ -11,6 +13,7 @@ import {
   type PresetId,
   type TemporalMode,
   type TrailReleaseMode,
+  type Vec2,
 } from './types';
 
 export interface ProjectSnapshot {
@@ -21,6 +24,7 @@ export interface ProjectSnapshot {
     type: MaskType;
     transform: MaskTransform;
     trailReleaseMode: TrailReleaseMode;
+    customCurve: BezierCurve;
   };
   effects: EffectSettings;
   carousel: {
@@ -32,7 +36,7 @@ export interface ProjectSnapshot {
   motion?: MotionTrack;
 }
 
-const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail'];
+const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
 const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
 const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
 const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'glitch', 'flash', 'liquid'];
@@ -51,6 +55,45 @@ const bool = (value: unknown, fallback = false) => typeof value === 'boolean' ? 
 
 function enumValue<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
   return typeof value === 'string' && values.includes(value as T) ? value as T : fallback;
+}
+
+function sanitizePoint(value: unknown, fallback: Vec2): Vec2 {
+  try {
+    const item = object(value);
+    return {
+      x: clamp(finite(item.x, fallback.x), -1.4, 1.4),
+      y: clamp(finite(item.y, fallback.y), -1.4, 1.4),
+    };
+  } catch {
+    return { ...fallback };
+  }
+}
+
+function sanitizeCurve(value: unknown): BezierCurve {
+  if (!value) return cloneCurve(DEFAULT_BEZIER_CURVE);
+  try {
+    const item = object(value);
+    const raw = Array.isArray(item.anchors) ? item.anchors : [];
+    const anchors = raw.slice(0, 10).flatMap((entry, index) => {
+      try {
+        const anchor = object(entry);
+        const fallback = DEFAULT_BEZIER_CURVE.anchors[index % DEFAULT_BEZIER_CURVE.anchors.length];
+        return [{
+          id: typeof anchor.id === 'string' && anchor.id ? anchor.id : `anchor-${index}`,
+          point: sanitizePoint(anchor.point, fallback.point),
+          handleIn: sanitizePoint(anchor.handleIn, fallback.handleIn),
+          handleOut: sanitizePoint(anchor.handleOut, fallback.handleOut),
+          linked: bool(anchor.linked, true),
+        }];
+      } catch {
+        return [];
+      }
+    });
+    if (anchors.length < 3) return cloneCurve(DEFAULT_BEZIER_CURVE);
+    return { version: 1, closed: true, anchors };
+  } catch {
+    return cloneCurve(DEFAULT_BEZIER_CURVE);
+  }
 }
 
 function sanitizeTransform(value: unknown): MaskTransform {
@@ -141,6 +184,7 @@ export function createProjectSnapshot(input: Omit<ProjectSnapshot, 'version' | '
     mask: {
       ...input.mask,
       transform: { ...input.mask.transform },
+      customCurve: cloneCurve(input.mask.customCurve),
     },
     effects: {
       ...input.effects,
@@ -181,6 +225,7 @@ export function parseProject(text: string): ProjectSnapshot {
       type: enumValue(mask.type, MASK_TYPES, PRESETS[preset].mask),
       transform: sanitizeTransform(mask.transform),
       trailReleaseMode: enumValue(mask.trailReleaseMode, TRAIL_MODES, 'dissipate'),
+      customCurve: sanitizeCurve(mask.customCurve),
     },
     effects: sanitizeEffects(root.effects),
     carousel: {
