@@ -357,7 +357,15 @@ export function installEdgeFxRuntime() {
     alternate: TexImageSource | undefined,
     state: RenderState,
   ) {
-    const result = previousRender.call(this, camera, alternate, state);
+    const baseState: RenderState = {
+      ...state,
+      effects: {
+        ...state.effects,
+        glow: 0,
+        effectStack: state.effects.effectStack.map((node) => ({ ...node })),
+      },
+    };
+    const result = previousRender.call(this, camera, alternate, baseState);
     const canvas = rendererCanvas(this);
     if (!canvas || canvas.width <= 1 || canvas.height <= 1) return result;
 
