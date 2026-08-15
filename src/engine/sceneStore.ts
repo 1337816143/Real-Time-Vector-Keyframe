@@ -34,7 +34,9 @@ export function setSceneEnabled(enabled: boolean) {
 }
 
 export function replaceScene(scene: MaskSceneGraph, enabled = state.enabled) {
-  state = { enabled, scene: cloneScene(scene) };
+  const next = cloneScene(scene);
+  if (next.nodes.length && !next.nodes.some((node) => node.visible)) next.nodes[0].visible = true;
+  state = { enabled, scene: next };
   emit();
 }
 
@@ -69,6 +71,7 @@ export function removeMask(id: string) {
   const index = state.scene.nodes.findIndex((node) => node.id === id);
   if (index < 0) return;
   const nodes = state.scene.nodes.filter((node) => node.id !== id);
+  if (!nodes.some((node) => node.visible)) nodes[0].visible = true;
   const selectedMaskId = state.scene.selectedMaskId === id
     ? nodes[Math.min(index, nodes.length - 1)]?.id
     : state.scene.selectedMaskId;
@@ -87,6 +90,9 @@ export function moveMask(id: string, direction: -1 | 1) {
 }
 
 export function updateMask(id: string, patch: Partial<Pick<SceneMaskNode, 'name' | 'visible' | 'locked'>>) {
+  const target = state.scene.nodes.find((node) => node.id === id);
+  if (!target) return;
+  if (patch.visible === false && target.visible && state.scene.nodes.filter((node) => node.visible).length <= 1) return;
   state = {
     ...state,
     scene: {
