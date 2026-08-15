@@ -165,6 +165,8 @@ uniform float uHoverVisible;
 uniform int uGestureState;
 uniform int uTrailCount;
 uniform vec3 uTrail[32];
+uniform int uCustomCount;
+uniform vec2 uCustom[64];
 uniform int uTransitionType;
 uniform float uTransitionProgress;
 uniform float uTransitionDirection;
@@ -194,11 +196,41 @@ vec2 rotate2(vec2 p, float a) {
   return mat2(c, -s, s, c) * p;
 }
 
-float capsuleSdf(vec2 p, vec2 a, vec2 b, float r) {
+float segmentDistance(vec2 p, vec2 a, vec2 b) {
   vec2 pa = p - a;
   vec2 ba = b - a;
   float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
-  return length(pa - ba * h) - r;
+  return length(pa - ba * h);
+}
+
+float capsuleSdf(vec2 p, vec2 a, vec2 b, float r) {
+  return segmentDistance(p, a, b) - r;
+}
+
+float customMaskSdf(vec2 metricPoint, float scale) {
+  if (uCustomCount < 3) return length(metricPoint) - scale;
+  vec2 q = metricPoint / max(0.03, scale);
+  float best = 10.0;
+  bool inside = false;
+
+  for (int i = 0; i < 64; i++) {
+    if (i >= uCustomCount) break;
+    int nextIndex = i + 1;
+    if (nextIndex >= uCustomCount) nextIndex = 0;
+    vec2 a = uCustom[i];
+    vec2 b = uCustom[nextIndex];
+    best = min(best, segmentDistance(q, a, b));
+
+    bool straddles = (a.y > q.y) != (b.y > q.y);
+    if (straddles) {
+      float denom = b.y - a.y;
+      if (abs(denom) < 0.00001) denom = denom < 0.0 ? -0.00001 : 0.00001;
+      float crossingX = (b.x - a.x) * (q.y - a.y) / denom + a.x;
+      if (q.x < crossingX) inside = !inside;
+    }
+  }
+
+  return (inside ? -best : best) * scale;
 }
 
 float maskSdf(vec2 uv) {
@@ -224,6 +256,7 @@ float maskSdf(vec2 uv) {
     float pulse = 1.0 + 0.025 * sin(uTime * 3.0) + 0.02 * sin(a * 7.0 + uTime * 1.8);
     return length(oval) - r * pulse;
   }
+  if (uMaskType == 4) return customMaskSdf(p, r);
 
   float best = 10.0;
   if (uTrailCount == 1) {
@@ -679,7 +712,8 @@ export class VfxRenderer {
     gl.uniform2f(this.uniform(program, 'uMaskCenter'), state.transform.x, 1 - state.transform.y);
     gl.uniform1f(this.uniform(program, 'uMaskScale'), state.transform.scale);
     gl.uniform1f(this.uniform(program, 'uMaskRotation'), -state.transform.rotation);
-    gl.uniform1i(this.uniform(program, 'uMaskType'), state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : 3);
+    const maskType = state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : state.maskType === 'trail' ? 3 : 4;
+    gl.uniform1i(this.uniform(program, 'uMaskType'), maskType);
     gl.uniform1f(this.uniform(program, 'uHandSpeed'), state.handSpeed);
     gl.uniform1f(this.uniform(program, 'uGlow'), state.effects.glow);
     gl.uniform1f(this.uniform(program, 'uInvertMask'), state.effects.invertMask ? 1 : 0);
@@ -692,14 +726,23 @@ export class VfxRenderer {
     gl.uniform1f(this.uniform(program, 'uTransitionDirection'), this.transitionDirection);
 
     const trail = state.trail.slice(-32);
-    const flat = new Float32Array(32 * 3);
+    const trailFlat = new Float32Array(32 * 3);
     trail.forEach((point, index) => {
-      flat[index * 3] = point.x;
-      flat[index * 3 + 1] = 1 - point.y;
-      flat[index * 3 + 2] = point.width;
+      trailFlat[index * 3] = point.x;
+      trailFlat[index * 3 + 1] = 1 - point.y;
+      trailFlat[index * 3 + 2] = point.width;
     });
     gl.uniform1i(this.uniform(program, 'uTrailCount'), trail.length);
-    gl.uniform3fv(this.uniform(program, 'uTrail[0]'), flat);
+    gl.uniform3fv(this.uniform(program, 'uTrail[0]'), trailFlat);
+
+    const custom = (state.customMask ?? []).slice(0, 64);
+    const customFlat = new Float32Array(64 * 2);
+    custom.forEach((point, index) => {
+      customFlat[index * 2] = point.x;
+      customFlat[index * 2 + 1] = -point.y;
+    });
+    gl.uniform1i(this.uniform(program, 'uCustomCount'), custom.length);
+    gl.uniform2fv(this.uniform(program, 'uCustom[0]'), customFlat);
     this.drawTo(null);
   }
 
