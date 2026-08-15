@@ -1,10 +1,18 @@
 import { useState } from 'react';
 import { ArrowRight, CircleDot, Hand, ShieldCheck, Sparkles, Video } from 'lucide-react';
+import CustomMaskOverlay from './components/CustomMaskOverlay';
 import Studio from './components/Studio';
 
 export default function App() {
   const [entered, setEntered] = useState(false);
-  if (entered) return <Studio onExit={() => setEntered(false)} />;
+  if (entered) {
+    return (
+      <>
+        <Studio onExit={() => setEntered(false)} />
+        <CustomMaskOverlay />
+      </>
+    );
+  }
 
   return (
     <main className="landing">
@@ -40,7 +48,7 @@ export default function App() {
 
       <footer className="landing-footer">
         <span>WEBGL2 / MEDIAPIPE / LOCAL-FIRST</span>
-        <span>v0.1 MVP FOUNDATION</span>
+        <span>v0.4 VECTOR MASK EDITOR</span>
       </footer>
     </main>
   );
