@@ -4,7 +4,7 @@ import type { SceneMaskNode } from './scene';
 import type { RenderState } from './types';
 
 type SceneStateBuilder = (base: RenderState, node: SceneMaskNode) => RenderState;
-type RendererPrototypeWithSceneBuilder = VfxRenderer['prototype'] & {
+type RendererPrototypeWithSceneBuilder = {
   stateForSceneNode?: SceneStateBuilder;
 };
 
@@ -14,7 +14,7 @@ export function installSceneInteractionRuntime() {
   if (installed) return;
   installed = true;
 
-  const prototype = VfxRenderer.prototype as RendererPrototypeWithSceneBuilder;
+  const prototype = VfxRenderer.prototype as unknown as RendererPrototypeWithSceneBuilder;
   const original = prototype.stateForSceneNode;
   if (!original) return;
 
