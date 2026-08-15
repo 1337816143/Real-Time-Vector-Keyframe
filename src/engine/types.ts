@@ -107,6 +107,8 @@ export interface RenderState {
   handSpeed: number;
   trail: Array<Vec2 & { width: number }>;
   customMask?: Vec2[];
+  customFeather?: number;
+  customExpansion?: number;
   hoverPoint?: Vec2;
   time: number;
 }
