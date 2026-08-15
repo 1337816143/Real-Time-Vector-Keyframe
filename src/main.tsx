@@ -1,6 +1,7 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import PerformanceProfiler from './components/PerformanceProfiler';
+import { installAdaptiveQualityRuntime } from './engine/adaptiveQualityRuntime';
 import { installCustomMaskRuntime } from './engine/customMaskRuntime';
 import { installEdgeFxRuntime } from './engine/edgeFxRuntime';
 import { installGpuProfilerRuntime } from './engine/gpuProfiler';
@@ -17,6 +18,7 @@ installSceneInteractionRuntime();
 installSceneMotionRuntime();
 installEdgeFxRuntime();
 installGpuProfilerRuntime();
+installAdaptiveQualityRuntime();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <>
