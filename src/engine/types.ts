@@ -10,7 +10,7 @@ export type GestureState =
   | 'RELEASE'
   | 'LOST';
 
-export type MaskType = 'circle' | 'blob' | 'portal' | 'trail';
+export type MaskType = 'circle' | 'blob' | 'portal' | 'trail' | 'custom';
 export type TemporalMode = 'none' | 'timeWindow' | 'echo' | 'afterImage';
 export type PlaybackMode = 'once' | 'loop' | 'reverse' | 'pingpong';
 export type TrailReleaseMode = 'hold' | 'dissipate' | 'close' | 'expand' | 'burst' | 'shrink';
@@ -22,6 +22,20 @@ export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 's
 export interface Vec2 {
   x: number;
   y: number;
+}
+
+export interface BezierAnchor {
+  id: string;
+  point: Vec2;
+  handleIn: Vec2;
+  handleOut: Vec2;
+  linked: boolean;
+}
+
+export interface BezierCurve {
+  version: 1;
+  closed: true;
+  anchors: BezierAnchor[];
 }
 
 export interface HandFrame {
@@ -92,6 +106,7 @@ export interface RenderState {
   gestureState: GestureState;
   handSpeed: number;
   trail: Array<Vec2 & { width: number }>;
+  customMask?: Vec2[];
   hoverPoint?: Vec2;
   time: number;
 }
