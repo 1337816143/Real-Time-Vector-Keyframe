@@ -88,6 +88,9 @@ function interpolateEffects(a: EffectSettings, b: EffectSettings, t: number): Ef
     pixelate: lerp(a.pixelate, b.pixelate, t),
     distortion: lerp(a.distortion, b.distortion, t),
     glow: lerp(a.glow, b.glow, t),
+    edgeFxMode: t < 0.5 ? (a.edgeFxMode ?? 'neon') : (b.edgeFxMode ?? 'neon'),
+    edgeFxSpeed: lerp(a.edgeFxSpeed ?? 1, b.edgeFxSpeed ?? 1, t),
+    edgeFxDensity: lerp(a.edgeFxDensity ?? 1, b.edgeFxDensity ?? 1, t),
     invertMask: t < 0.5 ? a.invertMask : b.invertMask,
     useAlternateMedia: t < 0.5 ? a.useAlternateMedia : b.useAlternateMedia,
     temporalMode: t < 0.5 ? a.temporalMode : b.temporalMode,
@@ -180,9 +183,12 @@ function effectsChanged(a: EffectSettings, b: EffectSettings) {
     + Math.abs(a.distortion - b.distortion)
     + Math.abs(a.pixelate - b.pixelate) * 0.001
     + Math.abs(a.glow - b.glow) * 0.01
+    + Math.abs((a.edgeFxSpeed ?? 1) - (b.edgeFxSpeed ?? 1)) * 0.01
+    + Math.abs((a.edgeFxDensity ?? 1) - (b.edgeFxDensity ?? 1)) * 0.01
     + Math.abs(a.temporalMix - b.temporalMix) * 0.01
     + Math.abs(a.temporalDelayMs - b.temporalDelayMs) * 0.00001;
   if (amount > 0.001) return true;
+  if ((a.edgeFxMode ?? 'neon') !== (b.edgeFxMode ?? 'neon')) return true;
   if (a.invertMask !== b.invertMask || a.useAlternateMedia !== b.useAlternateMedia || a.temporalMode !== b.temporalMode) return true;
   return JSON.stringify(a.effectStack) !== JSON.stringify(b.effectStack);
 }
