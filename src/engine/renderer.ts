@@ -167,6 +167,8 @@ uniform int uTrailCount;
 uniform vec3 uTrail[32];
 uniform int uCustomCount;
 uniform vec2 uCustom[64];
+uniform float uCustomFeather;
+uniform float uCustomExpansion;
 uniform int uTransitionType;
 uniform float uTransitionProgress;
 uniform float uTransitionDirection;
@@ -230,7 +232,8 @@ float customMaskSdf(vec2 metricPoint, float scale) {
     }
   }
 
-  return (inside ? -best : best) * scale;
+  float signedDistance = (inside ? -best : best) * scale;
+  return signedDistance - uCustomExpansion * scale;
 }
 
 float maskSdf(vec2 uv) {
@@ -322,7 +325,8 @@ void main() {
   vec3 base = texture(uCamera, cameraUv(vUv)).rgb;
   vec3 effect = transitionEffect(vUv);
   float sd = maskSdf(vUv);
-  float feather = 0.0045 + min(uHandSpeed, 2.0) * 0.0015;
+  float defaultFeather = 0.0045 + min(uHandSpeed, 2.0) * 0.0015;
+  float feather = uMaskType == 4 ? max(0.00015, uCustomFeather) : defaultFeather;
   float maskAlpha = 1.0 - smoothstep(-feather, feather, sd);
   if (uInvertMask > 0.5) maskAlpha = 1.0 - maskAlpha;
   vec3 color = mix(base, effect, maskAlpha);
@@ -717,6 +721,8 @@ export class VfxRenderer {
     gl.uniform1f(this.uniform(program, 'uHandSpeed'), state.handSpeed);
     gl.uniform1f(this.uniform(program, 'uGlow'), state.effects.glow);
     gl.uniform1f(this.uniform(program, 'uInvertMask'), state.effects.invertMask ? 1 : 0);
+    gl.uniform1f(this.uniform(program, 'uCustomFeather'), state.customFeather ?? 0.006);
+    gl.uniform1f(this.uniform(program, 'uCustomExpansion'), state.customExpansion ?? 0);
     const hover = state.hoverPoint;
     gl.uniform2f(this.uniform(program, 'uHover'), hover?.x ?? -2, hover ? 1 - hover.y : -2);
     gl.uniform1f(this.uniform(program, 'uHoverVisible'), hover ? 1 : 0);
