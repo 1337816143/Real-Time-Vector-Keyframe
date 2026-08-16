@@ -1,5 +1,5 @@
 import { cloneMaskNode, type SceneMaskNode } from './scene';
-import { getSceneState, setMaskEffectsSilently } from './sceneStore';
+import { getSceneState, setMaskEffects, setMaskEffectsSilently } from './sceneStore';
 import type { EffectSettings } from './types';
 
 export type SceneTransitionEasing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
@@ -15,6 +15,7 @@ export interface SceneEffectTransition {
 
 const transitions = new Map<string, SceneEffectTransition>();
 const listeners = new Set<() => void>();
+let animationFrame = 0;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -76,6 +77,42 @@ function emit() {
   listeners.forEach((listener) => listener());
 }
 
+function stopClockIfIdle() {
+  if (transitions.size || !animationFrame) return;
+  cancelAnimationFrame(animationFrame);
+  animationFrame = 0;
+}
+
+function tick(now: number) {
+  animationFrame = 0;
+  if (!transitions.size) return;
+
+  const completed: SceneEffectTransition[] = [];
+  for (const transition of transitions.values()) {
+    const raw = (now - transition.startedAt) / Math.max(1, transition.durationMs);
+    if (raw >= 1) {
+      completed.push(transition);
+      continue;
+    }
+    setMaskEffectsSilently(
+      transition.maskId,
+      blendEffects(transition.from, transition.to, ease(raw, transition.easing)),
+    );
+  }
+
+  for (const transition of completed) {
+    transitions.delete(transition.maskId);
+    setMaskEffects(transition.maskId, transition.to);
+  }
+
+  if (completed.length) emit();
+  if (transitions.size) animationFrame = requestAnimationFrame(tick);
+}
+
+function ensureClock() {
+  if (!animationFrame && transitions.size) animationFrame = requestAnimationFrame(tick);
+}
+
 export function subscribeSceneTransitions(listener: () => void) {
   listeners.add(listener);
   return () => {
@@ -100,16 +137,17 @@ export function beginSceneEffectTransition(
 ) {
   const node = getSceneState().scene.nodes.find((item) => item.id === maskId);
   if (!node) return false;
-  const current = effectiveNode(node, now);
+
   transitions.set(maskId, {
     maskId,
     startedAt: now,
     durationMs: Math.min(5000, Math.max(80, durationMs)),
     easing,
-    from: cloneEffects(current.effects),
+    from: cloneEffects(node.effects),
     to: cloneEffects(to),
   });
   emit();
+  ensureClock();
   return true;
 }
 
@@ -117,33 +155,28 @@ export function cancelSceneEffectTransition(maskId: string, commitTarget = false
   const transition = transitions.get(maskId);
   if (!transition) return;
   transitions.delete(maskId);
-  if (commitTarget) setMaskEffectsSilently(maskId, transition.to);
+  if (commitTarget) setMaskEffects(maskId, transition.to);
+  else setMaskEffects(maskId, transition.from);
   emit();
+  stopClockIfIdle();
 }
 
 export function clearSceneTransitions() {
   if (!transitions.size) return;
+  const active = [...transitions.values()];
   transitions.clear();
+  for (const transition of active) setMaskEffects(transition.maskId, transition.from);
   emit();
+  stopClockIfIdle();
 }
 
-function effectiveNode(node: SceneMaskNode, now: number) {
-  const transition = transitions.get(node.id);
-  if (!transition) return cloneMaskNode(node);
-  const raw = (now - transition.startedAt) / Math.max(1, transition.durationMs);
-  if (raw >= 1) {
-    transitions.delete(node.id);
-    setMaskEffectsSilently(node.id, transition.to);
-    const committed = cloneMaskNode(node);
-    committed.effects = cloneEffects(transition.to);
-    emit();
-    return committed;
-  }
-  const result = cloneMaskNode(node);
-  result.effects = blendEffects(transition.from, transition.to, ease(raw, transition.easing));
-  return result;
-}
-
-export function applySceneEffectTransitions(nodes: SceneMaskNode[], now: number) {
-  return nodes.map((node) => effectiveNode(node, now));
+export function applySceneEffectTransitions(nodes: SceneMaskNode[], now = performance.now()) {
+  return nodes.map((node) => {
+    const transition = transitions.get(node.id);
+    if (!transition) return cloneMaskNode(node);
+    const raw = clamp01((now - transition.startedAt) / Math.max(1, transition.durationMs));
+    const result = cloneMaskNode(node);
+    result.effects = blendEffects(transition.from, transition.to, ease(raw, transition.easing));
+    return result;
+  });
 }
