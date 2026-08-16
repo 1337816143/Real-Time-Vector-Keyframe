@@ -25,21 +25,32 @@ import {
   removeMask,
   selectMask,
   setCustomMaskGeometry,
-  setMaskEffectPreset,
   setMaskEffects,
   setSceneEnabled,
   subscribeScene,
   updateMask,
 } from '../engine/sceneStore';
 import { sceneMotionRecorder } from '../engine/sceneMotion';
+import {
+  beginSceneEffectTransition,
+  type SceneTransitionEasing,
+} from '../engine/sceneTransition';
 import { PRESETS, type PresetId } from '../engine/types';
 
 const EFFECT_PRESETS: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
+const TRANSITION_EASINGS: Array<{ id: SceneTransitionEasing; label: string }> = [
+  { id: 'linear', label: 'Linear' },
+  { id: 'easeIn', label: 'Ease In' },
+  { id: 'easeOut', label: 'Ease Out' },
+  { id: 'easeInOut', label: 'Ease In-Out' },
+];
 
 export default function ScenePanel() {
   const state = useSyncExternalStore(subscribeScene, getSceneState, getSceneState);
   const [open, setOpen] = useState(false);
   const [motionBusy, setMotionBusy] = useState(false);
+  const [transitionDuration, setTransitionDuration] = useState(650);
+  const [transitionEasing, setTransitionEasing] = useState<SceneTransitionEasing>('easeInOut');
   const selected = state.scene.nodes.find((node) => node.id === state.scene.selectedMaskId);
   const topologyLocked = motionBusy || sceneMotionRecorder.isRecording() || sceneMotionRecorder.isPlaying();
 
@@ -112,11 +123,40 @@ export default function ScenePanel() {
               </div>
 
               <label className="scene-preset-select">
-                <span>Effect preset</span>
-                <select key={selected.id} defaultValue={selected.geometry.kind === 'trail' ? 'slash' : 'multiverse'} onChange={(event) => setMaskEffectPreset(selected.id, event.target.value as PresetId)}>
+                <span>Effect preset · live crossfade</span>
+                <select
+                  key={selected.id}
+                  defaultValue={selected.geometry.kind === 'trail' ? 'slash' : 'multiverse'}
+                  onChange={(event) => {
+                    const presetId = event.target.value as PresetId;
+                    beginSceneEffectTransition(
+                      selected.id,
+                      PRESETS[presetId].effects,
+                      transitionDuration,
+                      transitionEasing,
+                    );
+                  }}
+                >
                   {EFFECT_PRESETS.map((id) => <option key={id} value={id}>{PRESETS[id].label}</option>)}
                 </select>
               </label>
+
+              <div className="scene-effect-amounts">
+                <SceneRange
+                  label="Preset transition"
+                  value={transitionDuration}
+                  min={80}
+                  max={2200}
+                  step={20}
+                  onChange={setTransitionDuration}
+                />
+                <label className="scene-preset-select">
+                  <span>Transition easing</span>
+                  <select value={transitionEasing} onChange={(event) => setTransitionEasing(event.target.value as SceneTransitionEasing)}>
+                    {TRANSITION_EASINGS.map((easing) => <option key={easing.id} value={easing.id}>{easing.label}</option>)}
+                  </select>
+                </label>
+              </div>
 
               <div className="scene-effect-amounts">
                 <SceneRange label="RGB split" value={selected.effects.rgbSplit} min={0} max={0.04} step={0.001} onChange={(value) => setMaskEffects(selected.id, { ...selected.effects, rgbSplit: value })} />
@@ -180,7 +220,7 @@ export default function ScenePanel() {
           <SceneMotionControls onBusyChange={setMotionBusy} />
           <EffectSequenceEditor />
 
-          <p className="panel-note">Scene order runs from bottom to top. Circle / Blob / Portal / Custom / Trail nodes all participate in the same GPU Scene, Motion lanes, Effect Sequence and recording pipeline.</p>
+          <p className="panel-note">Scene order runs from bottom to top. Circle / Blob / Portal / Custom / Trail nodes all participate in the same GPU Scene, Motion lanes, Effect Sequence and recording pipeline. Preset crossfades run independently per mask.</p>
         </div>
       )}
     </aside>
