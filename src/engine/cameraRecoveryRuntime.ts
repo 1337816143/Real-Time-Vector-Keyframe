@@ -79,7 +79,7 @@ function showGpuFallbackNote(message = 'GPU output is invalid · showing raw cam
   note.onclick = null;
 }
 
-function syncMirror(video: HTMLVideoElement | undefined, mirror: boolean) {
+function syncMirror(video: HTMLVideoElement | null | undefined, mirror: boolean) {
   if (!video) return;
   video.classList.toggle('camera-recovery-mirrored', mirror);
 }
