@@ -24,6 +24,44 @@
   opacity: 1;
 }
 
+.camera-mode-toggle {
+  position: absolute;
+  z-index: 12;
+  left: 14px;
+  top: 82px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 138px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: #dff7ff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.camera-mode-toggle strong {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: .08em;
+}
+
+.camera-mode-toggle span {
+  color: #8294a1;
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.camera-mode-toggle[data-mode='raw'] {
+  border-color: rgba(255, 202, 111, .34);
+  background: rgba(45, 29, 9, .78);
+}
+
+.camera-mode-toggle[data-mode='raw'] strong {
+  color: #ffd58f;
+}
+
 .camera-recovery-note {
   position: absolute;
   z-index: 12;
@@ -50,4 +88,13 @@
   color: #91a0ad;
   font-size: 10px;
   line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+  .camera-mode-toggle {
+    top: 74px;
+    left: 10px;
+    min-width: 126px;
+    padding: 8px 10px;
+  }
 }
