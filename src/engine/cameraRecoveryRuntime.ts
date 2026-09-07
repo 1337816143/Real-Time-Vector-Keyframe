@@ -14,6 +14,9 @@ type VideoHealth = {
   lastCurrentTime: number;
   lastAdvanceAt: number;
   callbackStarted: boolean;
+  trackId: string;
+  streamStartedAt: number;
+  constraintAttempted: boolean;
 };
 
 const rendererState = new WeakMap<VfxRenderer, RecoveryState>();
@@ -24,6 +27,7 @@ probeCanvas.width = 12;
 probeCanvas.height = 12;
 const probeContext = probeCanvas.getContext('2d', { willReadFrequently: true });
 let installed = false;
+let forceRaw = new URLSearchParams(window.location.search).get('raw') === '1';
 
 function rendererCanvas(renderer: VfxRenderer) {
   return (renderer as unknown as { canvas: HTMLCanvasElement }).canvas;
@@ -93,14 +97,38 @@ function healthFor(video: HTMLVideoElement) {
       lastCurrentTime: 0,
       lastAdvanceAt: 0,
       callbackStarted: false,
+      trackId: '',
+      streamStartedAt: performance.now(),
+      constraintAttempted: false,
     };
     videoHealth.set(video, health);
   }
   return health;
 }
 
-function startVideoFrameObserver(video: HTMLVideoElement) {
+function currentVideoTrack(video: HTMLVideoElement) {
+  return video.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks()[0] : undefined;
+}
+
+function syncTrackHealth(video: HTMLVideoElement, now: number) {
   const health = healthFor(video);
+  const track = currentVideoTrack(video);
+  const trackId = track?.id ?? '';
+  if (trackId && trackId !== health.trackId) {
+    health.frameCount = 0;
+    health.lastFrameAt = 0;
+    health.lastCurrentTime = 0;
+    health.lastAdvanceAt = 0;
+    health.callbackStarted = false;
+    health.trackId = trackId;
+    health.streamStartedAt = now;
+    health.constraintAttempted = false;
+  }
+  return health;
+}
+
+function startVideoFrameObserver(video: HTMLVideoElement) {
+  const health = syncTrackHealth(video, performance.now());
   if (health.callbackStarted) return;
   health.callbackStarted = true;
 
@@ -109,9 +137,11 @@ function startVideoFrameObserver(video: HTMLVideoElement) {
   };
   if (!typedVideo.requestVideoFrameCallback) return;
 
+  const observedTrackId = health.trackId;
   const observe = () => {
     typedVideo.requestVideoFrameCallback?.(() => {
       const current = healthFor(video);
+      if (observedTrackId && current.trackId !== observedTrackId) return;
       current.frameCount += 1;
       current.lastFrameAt = performance.now();
       current.lastCurrentTime = video.currentTime;
@@ -122,9 +152,43 @@ function startVideoFrameObserver(video: HTMLVideoElement) {
   observe();
 }
 
+function updateModeToggle() {
+  const button = document.querySelector<HTMLButtonElement>('.camera-mode-toggle');
+  if (!button) return;
+  button.dataset.mode = forceRaw ? 'raw' : 'auto';
+  button.innerHTML = forceRaw
+    ? '<strong>RAW CAMERA</strong><span>GPU bypassed · tap for VFX auto</span>'
+    : '<strong>VFX AUTO</strong><span>tap to force raw camera</span>';
+}
+
+function ensureModeToggle() {
+  const shell = document.querySelector<HTMLElement>('.studio-shell');
+  if (!shell) return;
+  let button = shell.querySelector<HTMLButtonElement>('.camera-mode-toggle');
+  if (!button) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'camera-mode-toggle glass-panel';
+    button.onclick = () => {
+      forceRaw = !forceRaw;
+      if (forceRaw) {
+        document.querySelectorAll<HTMLCanvasElement>('.vfx-canvas').forEach((canvas) => {
+          canvas.dataset.vfxLive = 'false';
+        });
+        clearRecoveryNote('gpu-fallback');
+      }
+      updateModeToggle();
+    };
+    shell.appendChild(button);
+  }
+  updateModeToggle();
+}
+
 function prepareCamera(video: HTMLVideoElement, mirror: boolean) {
   syncMirror(video, mirror);
+  syncTrackHealth(video, performance.now());
   startVideoFrameObserver(video);
+  ensureModeToggle();
   if (preparedVideos.has(video)) return;
   preparedVideos.add(video);
 
@@ -156,7 +220,7 @@ function prepareCamera(video: HTMLVideoElement, mirror: boolean) {
 }
 
 function updateFallbackFrameHealth(video: HTMLVideoElement, now: number) {
-  const health = healthFor(video);
+  const health = syncTrackHealth(video, now);
   if (video.currentTime > 0 && Math.abs(video.currentTime - health.lastCurrentTime) > 0.001) {
     health.frameCount += 1;
     health.lastCurrentTime = video.currentTime;
@@ -173,6 +237,24 @@ function videoHasRealFrames(video: HTMLVideoElement, now: number) {
     ? now - health.lastFrameAt < 1800
     : health.lastAdvanceAt > 0 && now - health.lastAdvanceAt < 1800;
   return dimensionReady && dataReady && health.frameCount >= 2 && recentFrame;
+}
+
+function attemptConservativeCameraProfile(video: HTMLVideoElement, now: number) {
+  const health = syncTrackHealth(video, now);
+  if (health.constraintAttempted || now - health.streamStartedAt < 2200 || health.frameCount >= 2) return;
+  const track = currentVideoTrack(video);
+  if (!track || track.readyState !== 'live') return;
+
+  health.constraintAttempted = true;
+  showWaitingNote('No decoded frames yet · applying a 720p / 30fps recovery profile…');
+  void track.applyConstraints({
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30, max: 30 },
+  }).then(() => video.play()).catch((error) => {
+    console.warn('[camera-recovery] conservative camera constraints failed', error);
+    showWaitingNote('Camera is active but frames are not arriving. Try switching camera or reloading the Studio.');
+  });
 }
 
 function sampleVideoLuma(video: HTMLVideoElement) {
@@ -255,10 +337,27 @@ export function installCameraRecoveryRuntime() {
     if (!realFrames) {
       recovery.goodProbes = 0;
       canvas.dataset.vfxLive = 'false';
+      attemptConservativeCameraProfile(camera, now);
       if (camera.srcObject && camera.readyState >= HTMLMediaElement.HAVE_METADATA) {
         if (camera.paused) showResumeNote(camera);
-        else showWaitingNote();
+        else {
+          const health = healthFor(camera);
+          showWaitingNote(
+            now - health.streamStartedAt > 5200
+              ? 'Camera is active but no decoded frames are arriving. Try switching camera or reloading the Studio.'
+              : 'Waiting for the first real camera frame…',
+          );
+        }
       }
+    }
+
+    if (forceRaw) {
+      canvas.dataset.vfxLive = 'false';
+      if (realFrames) {
+        clearRecoveryNote('gpu-fallback');
+        clearRecoveryNote('camera-waiting');
+      }
+      return undefined;
     }
 
     try {
