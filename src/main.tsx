@@ -3,6 +3,7 @@ import App from './App';
 import PerformanceProfiler from './components/PerformanceProfiler';
 import { installAdaptiveQualityRuntime } from './engine/adaptiveQualityRuntime';
 import { installCameraRecoveryRuntime } from './engine/cameraRecoveryRuntime';
+import { installChineseUiRuntime } from './engine/uiChineseRuntime';
 import { installCustomMaskRuntime } from './engine/customMaskRuntime';
 import { installEdgeFxRuntime } from './engine/edgeFxRuntime';
 import { installGpuProfilerRuntime } from './engine/gpuProfiler';
@@ -24,6 +25,7 @@ installEdgeFxRuntime();
 installGpuProfilerRuntime();
 installAdaptiveQualityRuntime();
 installCameraRecoveryRuntime();
+installChineseUiRuntime();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <>
