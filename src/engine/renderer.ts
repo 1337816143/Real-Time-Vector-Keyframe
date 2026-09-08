@@ -348,8 +348,8 @@ void main() {
     float hd = length(hp);
     float ring = exp(-abs(hd - 0.016) * 620.0);
     float core = exp(-hd * 210.0) * 0.38;
-    float active = uGestureState >= 2 ? 1.0 : 0.45;
-    color += vec3(0.72, 0.94, 1.0) * (ring + core) * active;
+    float hoverIntensity = uGestureState >= 2 ? 1.0 : 0.45;
+    color += vec3(0.72, 0.94, 1.0) * (ring + core) * hoverIntensity;
   }
 
   color = color / (1.0 + max(color - 1.0, 0.0));

@@ -22,6 +22,7 @@ type VideoHealth = {
 const rendererState = new WeakMap<VfxRenderer, RecoveryState>();
 const videoHealth = new WeakMap<HTMLVideoElement, VideoHealth>();
 const preparedVideos = new WeakSet<HTMLVideoElement>();
+const noteMessages = new WeakMap<HTMLButtonElement, string>();
 const probeCanvas = document.createElement('canvas');
 probeCanvas.width = 12;
 probeCanvas.height = 12;
@@ -57,11 +58,22 @@ function clearRecoveryNote(kind?: string) {
   note.remove();
 }
 
+function setNoteContent(note: HTMLButtonElement, title: string, message: string) {
+  const key = JSON.stringify([title, message]);
+  if (noteMessages.get(note) === key) return;
+  noteMessages.set(note, key);
+  const heading = document.createElement('strong');
+  const detail = document.createElement('span');
+  heading.textContent = title;
+  detail.textContent = message;
+  note.replaceChildren(heading, detail);
+}
+
 function showResumeNote(video: HTMLVideoElement) {
   const note = recoveryNote();
   if (!note) return;
   note.dataset.kind = 'camera-paused';
-  note.innerHTML = '<strong>Camera is ready but paused</strong><span>Tap to resume the live preview</span>';
+  setNoteContent(note, 'Camera is ready but paused', 'Tap to resume the live preview');
   note.onclick = () => {
     void video.play().then(() => clearRecoveryNote('camera-paused')).catch(() => undefined);
   };
@@ -71,7 +83,7 @@ function showWaitingNote(message = 'Waiting for the first real camera frame…')
   const note = recoveryNote();
   if (!note || note.dataset.kind === 'camera-paused') return;
   note.dataset.kind = 'camera-waiting';
-  note.innerHTML = `<strong>Camera connected</strong><span>${message}</span>`;
+  setNoteContent(note, 'Camera connected', message);
   note.onclick = null;
 }
 
@@ -79,7 +91,7 @@ function showGpuFallbackNote(message = 'GPU output is invalid · showing raw cam
   const note = recoveryNote();
   if (!note || note.dataset.kind === 'camera-paused') return;
   note.dataset.kind = 'gpu-fallback';
-  note.innerHTML = `<strong>Live camera fallback</strong><span>${message}</span>`;
+  setNoteContent(note, 'Live camera fallback', message);
   note.onclick = null;
 }
 
@@ -155,7 +167,10 @@ function startVideoFrameObserver(video: HTMLVideoElement) {
 function updateModeToggle() {
   const button = document.querySelector<HTMLButtonElement>('.camera-mode-toggle');
   if (!button) return;
-  button.dataset.mode = forceRaw ? 'raw' : 'auto';
+  const mode = forceRaw ? 'raw' : 'auto';
+  // The render loop calls this every frame; preserve already-localized children.
+  if (button.dataset.mode === mode) return;
+  button.dataset.mode = mode;
   button.innerHTML = forceRaw
     ? '<strong>RAW CAMERA</strong><span>GPU bypassed · tap for VFX auto</span>'
     : '<strong>VFX AUTO</strong><span>tap to force raw camera</span>';

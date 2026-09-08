@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,3 +23,19 @@ jobs:
         run: npm install
       - name: Build
         run: npm run build
+      - name: Install browser regression runner
+        run: |
+          python3 -m venv .browser-venv
+          .browser-venv/bin/pip install --disable-pip-version-check playwright==1.57.0
+          .browser-venv/bin/python -m playwright install --with-deps chromium
+      - name: Studio startup, Chinese UI and mirror regressions
+        run: timeout 180s .browser-venv/bin/python tests/browser_smoke.py --require-gpu
+      - name: Save tested build and browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-browser-${{ github.run_id }}
+          path: |
+            dist/
+            test-results/browser/
+          retention-days: 7
