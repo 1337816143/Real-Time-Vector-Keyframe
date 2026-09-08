@@ -25,17 +25,24 @@
   opacity: 1;
 }
 
+/* Reserve a toolbar slot for the recovery control, mounted outside React. */
+.studio-topbar .topbar-actions {
+  padding-left: 110px;
+}
+
 .camera-mode-toggle {
   position: absolute;
   z-index: 12;
-  left: 14px;
-  top: 82px;
+  left: auto;
+  right: 142px;
+  top: max(20px, calc(env(safe-area-inset-top) + 8px));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  min-width: 138px;
-  padding: 9px 11px;
+  min-width: 100px;
+  height: 36px;
+  padding: 6px 8px;
   border-radius: 9px;
   color: #dff7ff;
   cursor: pointer;
@@ -91,11 +98,24 @@
   line-height: 1.35;
 }
 
+@media (max-width: 1050px) {
+  .studio-topbar .topbar-center {
+    display: none;
+  }
+  .studio-topbar {
+    grid-template-columns: 1fr auto;
+  }
+}
+
 @media (max-width: 720px) {
   .camera-mode-toggle {
-    top: 74px;
-    left: 10px;
-    min-width: 126px;
-    padding: 8px 10px;
+    left: auto;
+    right: 136px;
+    top: max(14px, calc(env(safe-area-inset-top) + 6px));
+    min-width: 92px;
+    padding: 6px;
+  }
+  .camera-mode-toggle span {
+    display: none;
   }
 }
