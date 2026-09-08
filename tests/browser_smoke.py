@@ -155,8 +155,7 @@ def main() -> None:
                     page.wait_for_function("document.querySelector('.studio-shell > video')?.currentTime > 0.15")
                     expect(video).to_have_css('transform', 'matrix(-1, 0, 0, 1, 0, 0)')
                     start = video.evaluate('(v) => v.currentTime')
-                    page.wait_for_timeout(450)
-                    assert video.evaluate('(v) => v.currentTime') > start + 0.1
+                    page.wait_for_function('(previous) => document.querySelector(".studio-shell > video").currentTime > previous + .1', arg=start, timeout=3000)
                     if gpu:
                         expect(page.locator('.vfx-canvas')).to_have_attribute('data-vfx-live', 'true', timeout=10000)
                         page.wait_for_function("""() => {
@@ -185,8 +184,8 @@ def main() -> None:
 
                 page.evaluate("document.querySelector('button[title=\"镜像已固定开启\"]').setAttribute('title', '镜像已固定开启')")
                 before = page.evaluate('window.__uiTest.beats')
-                page.wait_for_timeout(350)
-                assert page.evaluate('window.__uiTest.beats') > before + 1
+                # Verify event-loop progress, not a 350 ms hardware-GPU performance target.
+                page.wait_for_function('(previous) => window.__uiTest.beats >= previous + 2', arg=before, timeout=3000)
                 stat = snapshot(page)
                 assert not any(o['loop'] for o in stat['observers']), stat
                 assert not stat['shaderErrors'], stat['shaderErrors']
@@ -203,9 +202,9 @@ def main() -> None:
                 print('PASS', scenario, flush=True)
                 page.close()
                 page = None
-        except Exception:
+        except Exception as error:
             if page:
-                detail = {'scenario': scenario, 'state': snapshot(page), 'pageErrors': errors, 'console': console}
+                detail = {'scenario': scenario, 'failure': str(error), 'state': snapshot(page), 'pageErrors': errors, 'console': console}
                 (out / 'failure.json').write_text(json.dumps(detail, ensure_ascii=False, indent=2), encoding='utf-8')
                 print(json.dumps(detail, ensure_ascii=False), flush=True)
                 page.screenshot(path=str(out / 'failure.png'))
