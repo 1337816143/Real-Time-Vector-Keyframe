@@ -8,7 +8,8 @@
   object-fit: cover;
   pointer-events: none;
   background: #05070a;
-  transform: none;
+  /* Mirror-first preview must not depend on successful GPU initialization. */
+  transform: scaleX(-1);
 }
 
 .studio-shell > video.source-media:first-of-type.camera-recovery-mirrored {
