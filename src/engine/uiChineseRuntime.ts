@@ -1,5 +1,6 @@
 import { HandTracker } from './handTracking';
 import { VfxRenderer } from './renderer';
+import { observeUiLocalization } from './uiChineseObserver';
 
 const TEXT: Record<string, string> = {
   'VECTOR KEYFRAME': '矢量关键帧',
@@ -15,7 +16,6 @@ const TEXT: Record<string, string> = {
   'PINCH / DRAG': '捏合 / 拖动',
   'WEBGL2 / MEDIAPIPE / LOCAL-FIRST': 'WEBGL2 / MEDIAPIPE / 本地优先',
   'v0.5 MULTI-MASK SCENE': '多蒙版实时场景',
-
   'Starting camera…': '正在启动摄像头…',
   'Requesting camera access…': '正在请求摄像头权限…',
   'Camera ready': '摄像头已就绪',
@@ -40,7 +40,6 @@ const TEXT: Record<string, string> = {
   'Record': '录制',
   'Settings': '设置',
   'Controls': '控制面板',
-
   'EFFECT MODE · CAROUSEL': '特效模式 · 自动轮播',
   'Auto carousel': '自动轮播',
   'Carousel interval (ms)': '轮播间隔（毫秒）',
@@ -59,7 +58,6 @@ const TEXT: Record<string, string> = {
   'Temporal mix': '时间混合',
   'Invert mask': '反转蒙版',
   'Manual preset changes, swipe changes and Carousel all snapshot the previous processed GPU texture first. The selected transition is rendered into the final canvas, so recordings include it.': '手动切换预设、滑动切换和自动轮播都会先保存上一帧已处理的 GPU 纹理，再执行转场；最终录制会包含这些转场效果。',
-
   'circle': '圆形',
   'blob': '流体',
   'portal': '传送门',
@@ -75,7 +73,6 @@ const TEXT: Record<string, string> = {
   'Raw trail points': '原始轨迹点',
   'Reset transform': '重置变换',
   'Vector Trail is smoothed before rendering. Release behavior can hold the crack, dissipate it, close from both ends, expand, burst outward, or shrink its width to zero.': '矢量轨迹会在渲染前进行平滑。松手后可保持、消散、从两端闭合、扩张、向外爆裂或逐渐收缩到零。',
-
   'State': '状态',
   'Hands': '手数量',
   'Pinch ratio': '捏合比例',
@@ -95,7 +92,6 @@ const TEXT: Record<string, string> = {
   'Stop playback': '停止回放',
   'Clear motion': '清空运动',
   'Motion capture automatically creates sparse keyframes from transform, effect-stack, gesture-state and interaction-point changes. Scrubbing evaluates the same interpolation path as playback; Vector Slash reconstructs its crack up to the selected time.': '运动采集会根据变换、特效栈、手势状态和交互点变化自动生成稀疏关键帧。拖动时间轴与正式回放使用同一套插值路径；矢量切割会重建到所选时间点为止的轨迹。',
-
   'Start video recording': '开始视频录制',
   'Stop recording': '停止录制',
   'Save WebM': '保存 WebM',
@@ -106,7 +102,6 @@ const TEXT: Record<string, string> = {
   'Tracking FPS': '追踪帧率',
   'Temporal history': '时间历史',
   'Tracking debug': '追踪调试',
-
   'RENDER': '渲染',
   'TRACK': '追踪',
   'STATE': '状态',
@@ -115,7 +110,6 @@ const TEXT: Record<string, string> = {
   'HISTORY': '历史',
   'TRAIL': '轨迹',
   'MASK': '蒙版',
-
   'Multiverse Portal': '多元宇宙传送门',
   'Cyber Reality': '赛博现实',
   'Dream Window': '梦境窗口',
@@ -130,7 +124,6 @@ const TEXT: Record<string, string> = {
   'None': '无',
   'Echo': '回声',
   'After Image': '残影',
-
   'EFFECT STACK · GPU ORDER': '特效栈 · GPU 顺序',
   'Top → bottom': '从上到下',
   'RGB Split': 'RGB 分离',
@@ -154,18 +147,15 @@ const TEXT: Record<string, string> = {
   'Edge speed': '边缘速度',
   'Edge density': '边缘密度',
   'Ordered effect rows run before masking. Edge FX is a separate final WebGL pass on the same recordable canvas, so changing Neon / Scanner / Electric / Particle does not reorder or contaminate the texture effect graph.': '有序特效栈先于蒙版执行；边缘特效使用同一可录制画布上的独立最终 WebGL 通道，因此切换霓虹、扫描、电流或粒子不会改变纹理特效图的顺序。',
-
   'PROJECT JSON': '项目 JSON',
   'Export project': '导出项目',
   'Import project': '导入项目',
   '.json · validated locally': '.json · 本地校验',
   'Project JSON stores single-mask state, Multi-Mask Scene Graph, per-mask Effect Stacks, Temporal FX, Carousel/transition settings, Motion Track and Scene Motion lanes. Uploaded image/video bytes stay local and are never embedded in the JSON.': '项目 JSON 保存单蒙版状态、多蒙版场景图、各蒙版特效栈、时间特效、轮播/转场设置、运动轨道和场景运动轨道。上传的图片和视频文件始终保留在本机，不会嵌入 JSON。',
-
   'KEYFRAME TIMELINE': '关键帧时间轴',
   'Record a motion performance to generate the first timeline.': '先录制一段运动，系统会生成第一条关键帧时间轴。',
   'PLAYING': '播放中',
   'SCRUB READY': '可拖动预览',
-
   'Multi-Mask Scene': '多蒙版场景',
   'Single-mask mode': '单蒙版模式',
   'Add': '添加',
@@ -188,7 +178,6 @@ const TEXT: Record<string, string> = {
   'Expansion': '扩张',
   'Feather': '羽化',
   'Scene order runs from bottom to top. Circle / Blob / Portal / Custom / Trail nodes all participate in the same GPU Scene, Motion lanes, Effect Sequence and recording pipeline. Preset crossfades run independently per mask.': '场景顺序从下到上。圆形、流体、传送门、自定义和轨迹节点共享同一套 GPU 场景、运动轨道、特效序列和录制管线；每个蒙版的预设渐变可独立运行。',
-
   'SCENE MOTION': '场景运动',
   'Capturing multi-mask lanes': '正在采集多蒙版轨道',
   'Editable identity-preserving keyframes': '可编辑、保持节点身份的关键帧',
@@ -205,7 +194,6 @@ const TEXT: Record<string, string> = {
   'Delete key': '删除关键帧',
   'Clear track': '清空轨道',
   'Select a key to edit it. Interior keys can be dragged horizontally to retime them; boundary keys keep the lane duration stable. Easing belongs to the segment leaving a key, and In/Out limits are respected by Once, Loop, Reverse and Ping Pong playback.': '选择关键帧即可编辑。中间关键帧可水平拖动调整时间，边界关键帧用于保持轨道时长稳定。缓动作用于从当前关键帧出发的片段，入点/出点范围会同时约束单次、循环、反向和往返回放。',
-
   'EFFECT SEQUENCE': '特效序列',
   'Time-ranged per-mask effect clips': '按时间范围作用于各蒙版的特效片段',
   'Record a Scene Motion track first. Effect Sequence uses that timeline as its absolute clock and never rewrites motion keyframes.': '请先录制场景运动轨道。特效序列使用该时间轴作为绝对时钟，不会改写运动关键帧。',
@@ -218,7 +206,6 @@ const TEXT: Record<string, string> = {
   'Fade out': '淡出',
   'Intensity': '强度',
   'Drag a clip body to move it and drag either edge to resize it. Sliders remain available for precise values. Clips are evaluated in list order and modify only render-time Effect/Temporal/Edge settings; Transform, geometry and Scene Motion keys are untouched.': '拖动片段主体可移动时间位置，拖动两侧可调整长度；滑块可用于精确数值。片段按列表顺序执行，只修改渲染时的特效、时间和边缘设置，不改变变换、几何形状和场景运动关键帧。',
-
   'VECTOR MASK EDITOR': '矢量蒙版编辑器',
   'Draw a closed silhouette': '绘制闭合轮廓',
   'Closed cubic Bezier': '闭合三次贝塞尔曲线',
@@ -228,7 +215,6 @@ const TEXT: Record<string, string> = {
   'Free': '自由',
   'Reset': '重置',
   'Use Draw for a fast silhouette: the stroke is resampled into a small editable cubic curve. Then drag anchors or handles for precise cleanup. Linked handles stay tangent; Free handles allow asymmetric corners.': '使用“绘制”可快速勾勒轮廓，笔迹会被重采样成少量可编辑的三次贝塞尔曲线。随后拖动锚点或手柄进行精修；联动手柄保持切线，自由手柄允许不对称拐角。',
-
   'GPU PROFILER': 'GPU 性能分析',
   'GPU N/A': 'GPU 不可用',
   'REAL-DEVICE PROFILER': '真实设备性能分析',
@@ -242,7 +228,6 @@ const TEXT: Record<string, string> = {
   'Reset samples': '重置样本',
   'Export JSON': '导出 JSON',
   'Samples are collected locally about four times per second and bucketed by visible mask count. GPU time uses `EXT_disjoint_timer_query_webgl2` only when the current browser exposes it; unsupported devices show N/A instead of an estimated value.': '样本仅在本机采集，每秒约四次，并按可见蒙版数量分组。只有浏览器支持 `EXT_disjoint_timer_query_webgl2` 时才记录 GPU 时间；不支持的设备显示不可用，不进行估算。',
-
   'Camera is ready but paused': '摄像头已就绪但已暂停',
   'Tap to resume the live preview': '点击恢复实时预览',
   'Camera connected': '摄像头已连接',
@@ -258,8 +243,6 @@ const TEXT: Record<string, string> = {
   'Camera is active but no decoded frames are arriving. Try switching camera or reloading the Studio.': '摄像头处于活动状态，但没有收到解码帧。请尝试切换摄像头或重新打开工作室。',
   'WebGL2 context is unavailable or lost': 'WebGL2 上下文不可用或已丢失',
 };
-
-const ATTRS = ['title', 'aria-label', 'placeholder'] as const;
 
 const ATTR_TEXT: Record<string, string> = {
   'Exit studio': '退出工作室',
@@ -326,46 +309,21 @@ function translateValue(value: string) {
   return TEXT[value] ?? ATTR_TEXT[value] ?? translateDynamic(value);
 }
 
-function replacePreservingWhitespace(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  const translated = translateValue(trimmed);
-  if (translated === trimmed) return value;
-  const start = value.slice(0, value.indexOf(trimmed));
-  const end = value.slice(value.indexOf(trimmed) + trimmed.length);
-  return `${start}${translated}${end}`;
-}
-
-function translateNode(node: Node) {
-  if (node.nodeType === Node.TEXT_NODE) {
-    const parent = node.parentElement;
-    if (!parent || ['SCRIPT', 'STYLE', 'TEXTAREA'].includes(parent.tagName)) return;
-    const next = replacePreservingWhitespace(node.nodeValue ?? '');
-    if (next !== node.nodeValue) node.nodeValue = next;
-    return;
-  }
-  if (!(node instanceof Element)) return;
-  for (const attr of ATTRS) {
-    const value = node.getAttribute(attr);
-    if (!value) continue;
-    const next = translateValue(value);
-    if (next !== value) node.setAttribute(attr, next);
-  }
-  node.childNodes.forEach(translateNode);
-}
-
 function enforceMirrorControls() {
   document.querySelectorAll<HTMLButtonElement>('button[title="Mirror camera"], button[title="镜像已固定开启"]').forEach((button) => {
-    button.disabled = true;
-    button.title = '镜像已固定开启';
-    button.setAttribute('aria-label', '镜像已固定开启');
+    // Reflected attribute setters emit mutation records even when the value is unchanged.
+    if (!button.disabled) button.disabled = true;
+    if (button.title !== '镜像已固定开启') button.title = '镜像已固定开启';
+    if (button.getAttribute('aria-label') !== '镜像已固定开启') {
+      button.setAttribute('aria-label', '镜像已固定开启');
+    }
   });
   document.querySelectorAll<HTMLLabelElement>('.toggle-row').forEach((label) => {
     if (!label.textContent?.includes('镜像摄像头')) return;
     const input = label.querySelector<HTMLInputElement>('input[type="checkbox"]');
     if (!input) return;
-    input.checked = true;
-    input.disabled = true;
+    if (!input.checked) input.checked = true;
+    if (!input.disabled) input.disabled = true;
   });
 }
 
@@ -388,39 +346,7 @@ export function installChineseUiRuntime() {
     return trackerSetMirrored.call(this, true);
   };
 
-  const refresh = (node: Node = document.body) => {
-    translateNode(node);
-    enforceMirrorControls();
-  };
-
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'characterData') translateNode(mutation.target);
-      if (mutation.type === 'attributes') translateNode(mutation.target);
-      mutation.addedNodes.forEach(translateNode);
-    }
-    enforceMirrorControls();
-  });
-
-  if (document.body) {
-    refresh();
-    observer.observe(document.body, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: [...ATTRS],
-    });
-  } else {
-    window.addEventListener('DOMContentLoaded', () => {
-      refresh();
-      observer.observe(document.body, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: [...ATTRS],
-      });
-    }, { once: true });
-  }
+  const start = () => observeUiLocalization(document.body, translateValue, enforceMirrorControls);
+  if (document.body) start();
+  else window.addEventListener('DOMContentLoaded', start, { once: true });
 }
