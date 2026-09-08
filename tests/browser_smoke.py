@@ -1,9 +1,8 @@
-"""Offline Chromium regressions for the built Studio, not real-camera/hand-model validation.
+"""Offline Chromium regressions against the actual Vite production bundle.
 
-Usage: npm run build; pip install playwright==1.57.0;
-       python -m playwright install chromium; python tests/browser_smoke.py
-The test injects the unmodified Vite entry bundle, a synthetic local MediaStream,
-and a failed model network. No camera frames or user data leave the browser.
+Uses synthetic local MediaStreams and deliberately unavailable model requests.
+Does not claim hardware webcam, mobile device or hand-landmark validation.
+Run after npm run build: python tests/browser_smoke.py --require-gpu
 """
 from __future__ import annotations
 
@@ -15,7 +14,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 INSTRUMENT = """() => {
-  window.__uiTest = {beats: 0, animationFrames: 0, observers: [], streams: []};
+  window.__uiTest = {beats: 0, animationFrames: 0, observers: [], streams: [],
+    gpuDraws: 0, pixels: null, shaderErrors: []};
   setInterval(() => window.__uiTest.beats++, 40);
   const tick = () => { window.__uiTest.animationFrames++; requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -28,11 +28,37 @@ INSTRUMENT = """() => {
         const frame = window.__uiTest.animationFrames;
         if (stat.frame !== frame) { stat.burst = 0; stat.frame = frame; }
         stat.calls++; stat.burst++; stat.maxBurst = Math.max(stat.maxBurst, stat.burst);
-        // Fail safely rather than leaving CI's browser in an endless microtask loop.
         if (stat.burst > 100) { stat.loop = true; observer.disconnect(); return; }
         callback(records, observer);
       });
     }
+  };
+  const proto = WebGL2RenderingContext.prototype;
+  const shaderLog = proto.getShaderInfoLog;
+  proto.getShaderInfoLog = function(shader) {
+    const result = shaderLog.call(this, shader);
+    if (result) window.__uiTest.shaderErrors.push(result);
+    return result;
+  };
+  const draw = proto.drawArrays;
+  proto.drawArrays = function(...args) {
+    const result = draw.apply(this, args);
+    const stat = window.__uiTest;
+    if (this.canvas.classList?.contains('vfx-canvas') &&
+        !this.getParameter(this.FRAMEBUFFER_BINDING) && this.drawingBufferWidth > 8) {
+      stat.gpuDraws++;
+      if (stat.gpuDraws % 15 === 1) {
+        // Read before the default buffer is presented/discarded, outside the central mask.
+        const sample = (x) => {
+          const pixel = new Uint8Array(4);
+          this.readPixels(Math.floor(this.drawingBufferWidth * x),
+            Math.floor(this.drawingBufferHeight * .8), 1, 1, this.RGBA, this.UNSIGNED_BYTE, pixel);
+          return Array.from(pixel);
+        };
+        stat.pixels = {left: sample(.1), right: sample(.9)};
+      }
+    }
+    return result;
   };
 }"""
 
@@ -55,6 +81,16 @@ MEDIA = """(deny) => {
 }"""
 
 
+def snapshot(page):
+    return page.evaluate("""() => ({...window.__uiTest,
+      streams: window.__uiTest.streams.map(s => s.getTracks().map(t => t.readyState)),
+      message: document.querySelector('.status-pill')?.textContent,
+      recovery: document.querySelector('.camera-recovery-note')?.textContent,
+      canvasLive: document.querySelector('.vfx-canvas')?.dataset.vfxLive,
+      videoTime: document.querySelector('.studio-shell > video')?.currentTime
+    })""")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--dist', default='dist')
@@ -65,7 +101,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     entries = list((dist / 'assets').glob('index-*.js'))
     if len(entries) != 1:
-        raise RuntimeError('Expected one Vite entry bundle; update the smoke harness for code splitting.')
+        raise RuntimeError('Expected one Vite entry bundle; update harness for code splitting.')
     script = entries[0].read_text(encoding='utf-8')
     styles = '\n'.join(p.read_text(encoding='utf-8') for p in (dist / 'assets').glob('*.css'))
     reports = []
@@ -74,6 +110,9 @@ def main() -> None:
         if os.environ.get('CHROMIUM_PATH'):
             launch['executable_path'] = os.environ['CHROMIUM_PATH']
         browser = p.chromium.launch(**launch)
+        page = None
+        scenario = 'initialization'
+        errors, console = [], []
         try:
             for scenario, viewport, deny, no_gpu in [
                 ('desktop-video', {'width': 1280, 'height': 800}, False, False),
@@ -84,8 +123,9 @@ def main() -> None:
                 page = browser.new_page(viewport=viewport)
                 page.set_default_timeout(10000)
                 page.route('https://**/*', lambda route: route.abort())
-                errors = []
+                errors, console = [], []
                 page.on('pageerror', lambda error: errors.append(str(error)))
+                page.on('console', lambda message: console.append(message.text) if len(console) < 30 and message.type in ['error', 'warning'] else None)
                 page.set_content('<!doctype html><html lang="zh-CN"><body><div id="root"></div></body></html>')
                 page.evaluate(INSTRUMENT)
                 page.evaluate(MEDIA, deny)
@@ -101,10 +141,7 @@ def main() -> None:
                 expect(page.locator('.enter-button')).to_have_text(re.compile('进入工作室'))
                 page.locator('.enter-button').click()
                 expect(page.locator('.studio-shell')).to_be_visible()
-                page.wait_for_function("!window.__uiTest.observers.some(o => o.loop)")
                 expect(page.locator('button[title="镜像已固定开启"]')).to_be_disabled()
-
-                # Test real pointer interactions, not direct React callbacks.
                 for title in ['设置', '蒙版', '运动', '录制', '特效']:
                     page.locator('.studio-dock .dock-button').filter(has_text=title).click()
                     expect(page.locator('.panel-heading h2')).to_contain_text('手势' if title == '运动' else title)
@@ -121,12 +158,19 @@ def main() -> None:
                     page.wait_for_timeout(450)
                     assert video.evaluate('(v) => v.currentTime') > start + 0.1
                     if gpu:
+                        expect(page.locator('.vfx-canvas')).to_have_attribute('data-vfx-live', 'true', timeout=10000)
+                        page.wait_for_function("""() => {
+                          const p = window.__uiTest.pixels;
+                          return window.__uiTest.gpuDraws > 2 && p &&
+                            p.left[2] > p.left[0] + 60 && p.right[0] > p.right[2] + 60;
+                        }""", timeout=10000)
+                        page.screenshot(path=str(out / f'{scenario}-gpu.png'))
                         page.locator('.camera-mode-toggle').click()
                         expect(page.locator('.camera-mode-toggle')).to_contain_text('原始摄像头')
                         page.evaluate("window.__modeHeading = document.querySelector('.camera-mode-toggle strong')")
                         page.wait_for_timeout(450)
                         assert page.evaluate("window.__modeHeading === document.querySelector('.camera-mode-toggle strong')")
-                        page.screenshot(path=str(out / f'{scenario}.png'))
+                        page.screenshot(path=str(out / f'{scenario}-raw.png'))
                         page.locator('.camera-mode-toggle').click()
                         expect(page.locator('.camera-mode-toggle')).to_contain_text('特效自动')
                     else:
@@ -139,15 +183,14 @@ def main() -> None:
                         page.locator('.studio-dock .dock-button').filter(has_text='特效').click()
                     expect(page.locator('.studio-panel')).to_have_class(re.compile('open'))
 
-                # A same-value attribute write must settle, not recursively trigger itself.
                 page.evaluate("document.querySelector('button[title=\"镜像已固定开启\"]').setAttribute('title', '镜像已固定开启')")
                 before = page.evaluate('window.__uiTest.beats')
                 page.wait_for_timeout(350)
                 assert page.evaluate('window.__uiTest.beats') > before + 1
-                stats = page.evaluate('window.__uiTest.observers')
-                assert not any(o['loop'] for o in stats), stats
+                stat = snapshot(page)
+                assert not any(o['loop'] for o in stat['observers']), stat
+                assert not stat['shaderErrors'], stat['shaderErrors']
                 assert not errors, errors
-
                 page.locator('.brand-button').click()
                 expect(page.locator('.enter-button')).to_have_text(re.compile('进入工作室'))
                 page.locator('.enter-button').click()
@@ -156,9 +199,17 @@ def main() -> None:
                 page.locator('.brand-button').click()
                 expect(page.locator('.enter-button')).to_be_visible()
                 assert not errors, errors
-                reports.append({'scenario': scenario, 'pass': True, 'gpuAvailable': gpu, 'observers': stats, 'pageErrors': errors})
+                reports.append({'scenario': scenario, 'pass': True, 'gpuAvailable': gpu, 'state': stat, 'pageErrors': errors})
                 print('PASS', scenario, flush=True)
                 page.close()
+                page = None
+        except Exception:
+            if page:
+                detail = {'scenario': scenario, 'state': snapshot(page), 'pageErrors': errors, 'console': console}
+                (out / 'failure.json').write_text(json.dumps(detail, ensure_ascii=False, indent=2), encoding='utf-8')
+                print(json.dumps(detail, ensure_ascii=False), flush=True)
+                page.screenshot(path=str(out / 'failure.png'))
+            raise
         finally:
             browser.close()
     (out / 'report.json').write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding='utf-8')
