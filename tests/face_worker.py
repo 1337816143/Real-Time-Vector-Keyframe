@@ -42,7 +42,7 @@ with sync_playwright() as p:
           const canvas=document.createElement('canvas');canvas.width=320;canvas.height=240;const c=canvas.getContext('2d');c.fillStyle='#111111';c.fillRect(0,0,320,240);const bitmap=await createImageBitmap(canvas);
           const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Blank-frame inference timeout')),10000);worker.onmessage=e=>{if(e.data.type==='result'){clearTimeout(timer);resolve(e.data);}else if(e.data.type==='error'){clearTimeout(timer);reject(new Error(e.data.diagnostic||e.data.message));}};worker.postMessage({type:'frame',id:1,timestamp:performance.now(),bitmap},[bitmap]);});
           worker.postMessage({type:'close'});worker.terminate();if(forceFallback)URL.revokeObjectURL(workerUrl);
-          return {delegate:init.delegate,gpuFailure:init.gpuFailure,warmupMs:init.warmupMs,initMs,inferenceMs:result.inferenceMs,landmarkCount:result.landmarks.length,frameId:result.id,bitmapTransferred:bitmap.width===0};
+          return {delegate:init.delegate,gpuFailure:init.gpuFailure,warmupMs:init.warmupMs,warmupSamples:init.warmupSamples,initMs,inferenceMs:result.inferenceMs,landmarkCount:result.landmarks.length,frameId:result.id,bitmapTransferred:bitmap.width===0};
         }''',{'workerPath':base+'/assets/'+workers[0].name,'forceFallback':force_fallback})
           assert report['initMs']<30000,report
           assert report['landmarkCount']==0 and report['frameId']==1 and report['bitmapTransferred'],report

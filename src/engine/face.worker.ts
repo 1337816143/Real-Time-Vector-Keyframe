@@ -1,5 +1,5 @@
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import { createFaceTask } from './faceTask';
+import { createFaceTask, measureFaceWarmup } from './faceTask';
 import { FACE_INPUT_WIDTH, FACE_WARMUP_BUDGET_MS } from './facePolicy';
 
 const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
@@ -18,19 +18,18 @@ async function initialize(){
   const options={runningMode:'VIDEO' as const,numFaces:1,minFaceDetectionConfidence:.6,minFacePresenceConfidence:.6,minTrackingConfidence:.6,outputFaceBlendshapes:false,outputFacialTransformationMatrixes:false};
   const warmup=new OffscreenCanvas(FACE_INPUT_WIDTH,240);
   const fill=warmup.getContext('2d');fill?.fillRect(0,0,warmup.width,warmup.height);
-  let warmupMs=0;
+  let warmupMs=0;let warmupSamples:number[]=[];
   const created=await createFaceTask(async next=>{
     const candidate=await FaceLandmarker.createFromOptions(vision,{...options,canvas:new OffscreenCanvas(1,1),baseOptions:{modelAssetPath:MODEL,delegate:next}});
     try {
       // Compile kernels on a blank local frame before the main thread starts its frame deadline.
-      candidate.detectForVideo(warmup,0);
-      const start=performance.now();candidate.detectForVideo(warmup,1);warmupMs=performance.now()-start;
-      if(warmupMs>FACE_WARMUP_BUDGET_MS)throw new Error(`${next} warm-up exceeds freshness budget (${Math.round(warmupMs)} ms)`);
+      const measured=measureFaceWarmup(timestamp=>{candidate.detectForVideo(warmup,timestamp);},()=>performance.now(),FACE_WARMUP_BUDGET_MS);
+      warmupMs=measured.steadyMs;warmupSamples=measured.samples;
       return candidate;
     } catch(error){candidate.close();throw error;}
   },restoreFactory);
   task=created.task;delegate=created.delegate;
-  context.postMessage({type:'ready',delegate,gpuFailure:created.gpuFailure,warmupMs});
+  context.postMessage({type:'ready',delegate,gpuFailure:created.gpuFailure,warmupMs,warmupSamples});
 }
 context.onmessage=(event)=>{
   const message=event.data;

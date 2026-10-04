@@ -33,7 +33,7 @@ test('face geometry: invalid dimensions and non-simple outlines fail closed',()=
   assert.equal(faceFromLandmarks(crossed,1000,geometry),undefined);
 });
 
-const {createFaceTask}=await bundle('src/engine/faceTask.ts');
+const {createFaceTask,measureFaceWarmup}=await bundle('src/engine/faceTask.ts');
 test('face worker: cached module factory is restored before GPU-to-CPU fallback',async()=>{
   let factory;const calls=[];const token={};
   const result=await createFaceTask(async delegate=>{calls.push(delegate);assert.equal(factory,token);factory=undefined;if(delegate==='GPU')throw new Error('Synthetic GPU initialization failure');return {ready:true};},()=>{factory=token;});
@@ -57,4 +57,18 @@ test('face pipeline: persistently stale warmed faces stop clearly instead of sil
     w.emit({type:'result',id:f.id,timestamp:f.timestamp,landmarks:landmarks(),inferenceMs:i===0?30:300});
   }
   assert.equal(h.tracker.status,'error');assert.match(h.tracker.message,/持续过慢/);assert.equal(w.terminated,true);assert.equal(h.tracker.sample(3000,640,360),undefined);
+});
+
+function warmupProbe(durations){let time=0;const timestamps=[];const result=measureFaceWarmup(timestamp=>{timestamps.push(timestamp);time+=durations[timestamp];},()=>time,200);return {result,timestamps};}
+test('face warm-up: cold compilation is excluded and two consecutive warm samples are required',()=>{
+  const {result,timestamps}=warmupProbe([7000,150,120]);assert.deepEqual(timestamps,[0,1,2]);assert.deepEqual(result.samples,[150,120]);assert.equal(result.steadyMs,150);
+});
+test('face warm-up: a transient second-frame delay can stabilize within the same strict budget',()=>{
+  const {result}=warmupProbe([700,221,80,75]);assert.deepEqual(result.samples,[221,80,75]);assert.equal(result.steadyMs,80);
+});
+test('face warm-up: an intervening slow sample resets the consecutive streak',()=>{
+  const {result}=warmupProbe([700,80,221,90,85]);assert.deepEqual(result.samples,[80,221,90,85]);assert.equal(result.steadyMs,90);
+});
+test('face warm-up: sustained slowness is bounded at four measured attempts and preserves diagnostics',()=>{
+  const calls=[];let time=0;assert.throws(()=>measureFaceWarmup(timestamp=>{calls.push(timestamp);time+=300;},()=>time,200),/300, 300, 300, 300/);assert.deepEqual(calls,[0,1,2,3,4]);
 });
