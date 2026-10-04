@@ -22,8 +22,13 @@ import {
 import EffectStackEditor from './EffectStackEditor';
 import MotionTimeline from './MotionTimeline';
 import ProjectControls from './ProjectControls';
+import { CrossHandQuadController, cloneQuad, type QuadStatus } from '../engine/crossHandQuad';
+import { CameraSession } from '../engine/cameraSession';
+import { RecordingSession } from '../engine/recordingSession';
 import { GestureController } from '../engine/gesture';
 import { HandTracker } from '../engine/handTracking';
+import { getSceneState } from '../engine/sceneStore';
+import { sceneMotionRecorder } from '../engine/sceneMotion';
 import { MotionRecorder } from '../engine/motion';
 import { createProjectSnapshot, parseProject, stringifyProject } from '../engine/project';
 import { VfxRenderer } from '../engine/renderer';
@@ -65,11 +70,6 @@ function cloneEffects(effects: EffectSettings): EffectSettings {
     ...effects,
     effectStack: effects.effectStack.map((node) => ({ ...node })),
   };
-}
-
-function supportedMimeType() {
-  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
 }
 
 function mapRawLandmark(
@@ -167,29 +167,30 @@ function transitionLabel(type: EffectTransitionType) {
   return 'Liquid';
 }
 
-export default function Studio({ onExit }: { onExit: () => void }) {
+export default function Studio({ onExit, onModeChange }: { onExit: () => void; onModeChange: (advanced: boolean) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const altVideoRef = useRef<HTMLVideoElement>(null);
   const altImageRef = useRef<HTMLImageElement>(null);
   const freezeCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
-  const streamRef = useRef<MediaStream>();
+  const cameraSessionRef = useRef(new CameraSession());
+  const recordingSessionRef = useRef(new RecordingSession());
   const trackerRef = useRef<HandTracker>();
   const rendererRef = useRef<VfxRenderer>();
   const gestureRef = useRef(new GestureController(DEFAULT_TRANSFORM));
+  const quadRef = useRef(new CrossHandQuadController());
+  const quadScrubRef = useRef<RenderState['quad']>();
   const motionRef = useRef(new MotionRecorder());
   const trailRef = useRef(new VectorTrail());
   const snapshotRef = useRef<TrackingSnapshot>();
   const animationRef = useRef<number>();
-  const mediaRecorderRef = useRef<MediaRecorder>();
-  const recordingChunksRef = useRef<Blob[]>([]);
   const objectUrlsRef = useRef<string[]>([]);
   const presetRef = useRef<PresetId>('multiverse');
   const debugVisibleRef = useRef(false);
   const tutorialStepRef = useRef(0);
   const mirrorRef = useRef(true);
-  const maskTypeRef = useRef<MaskType>('portal');
+  const maskTypeRef = useRef<MaskType>('crossHandQuad');
   const effectsRef = useRef<EffectSettings>(cloneEffects(PRESETS.multiverse.effects));
   const transitionTypeRef = useRef<EffectTransitionType>('crossFade');
   const transitionDurationRef = useRef(650);
@@ -201,7 +202,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [mirror, setMirror] = useState(true);
   const [preset, setPreset] = useState<PresetId>('multiverse');
-  const [maskType, setMaskType] = useState<MaskType>('portal');
+  const [maskType, setMaskType] = useState<MaskType>('crossHandQuad');
   const [effects, setEffects] = useState<EffectSettings>(() => cloneEffects(PRESETS.multiverse.effects));
   const [debugVisible, setDebugVisible] = useState(false);
   const [debug, setDebug] = useState<EngineDebug>(initialDebug);
@@ -209,7 +210,13 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [recordingUrl, setRecordingUrl] = useState<string>();
   const [panel, setPanel] = useState<'mask' | 'effects' | 'gesture' | 'record' | 'settings'>('effects');
   const [panelOpen, setPanelOpen] = useState(true);
+  const [quadPreview, setQuadPreview] = useState(false);
+  const [quadStatus, setQuadStatus] = useState<QuadStatus>('waiting');
   const [trackingReady, setTrackingReady] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
+  const [trackingRetry, setTrackingRetry] = useState(0);
+  const [recordingError, setRecordingError] = useState('');
+  const [recordingMime, setRecordingMime] = useState('video/webm');
   const [tutorialStep, setTutorialStep] = useState(0);
   const [altMediaName, setAltMediaName] = useState('No alternate media');
   const [motionRecording, setMotionRecording] = useState(false);
@@ -226,6 +233,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   const [transitionDuration, setTransitionDuration] = useState(650);
   const [projectMessage, setProjectMessage] = useState('');
 
+  const captureFreeze = useCallback(() => {
+    const video = videoRef.current;
+    const freeze = freezeCanvasRef.current;
+    if (!video || video.readyState < 2) return;
+    freeze.width = video.videoWidth;
+    freeze.height = video.videoHeight;
+    freeze.getContext('2d')?.drawImage(video, 0, 0);
+    frozenRef.current = true;
+  }, []);
+
   const applyPreset = useCallback((id: PresetId, direction: -1 | 1 = 1, animate = true) => {
     const next = PRESETS[id];
     const nextEffects = cloneEffects(next.effects);
@@ -237,14 +254,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       );
     }
     presetRef.current = id;
-    maskTypeRef.current = next.mask;
+    const nextMask = maskTypeRef.current === 'crossHandQuad' ? 'crossHandQuad' : next.mask;
+    maskTypeRef.current = nextMask;
     effectsRef.current = nextEffects;
     setPreset(id);
-    setMaskType(next.mask);
+    setMaskType(nextMask);
     setEffects(nextEffects);
     if (id === 'slash') trailRef.current.begin();
     if (id !== 'freeze') frozenRef.current = false;
-  }, []);
+    else if (nextMask === 'crossHandQuad') captureFreeze();
+  }, [captureFreeze]);
 
   const cyclePreset = useCallback((direction: -1 | 1) => {
     const current = PRESET_ORDER.indexOf(presetRef.current);
@@ -252,44 +271,25 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     applyPreset(PRESET_ORDER[nextIndex], direction, true);
   }, [applyPreset]);
 
-  const captureFreeze = useCallback(() => {
-    const video = videoRef.current;
-    const freeze = freezeCanvasRef.current;
-    if (!video || video.readyState < 2) return;
-    freeze.width = video.videoWidth;
-    freeze.height = video.videoHeight;
-    freeze.getContext('2d')?.drawImage(video, 0, 0);
-    frozenRef.current = true;
-  }, []);
-
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
     const video = videoRef.current;
     if (!video) return;
-    setStatus('loading');
-    setStatusMessage('Requesting camera access…');
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: mode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 60, max: 60 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      video.srcObject = stream;
-      await video.play();
-      setStatus('ready');
-      setStatusMessage('Camera ready');
-    } catch (error) {
-      console.error(error);
-      setStatus('error');
-      setStatusMessage(error instanceof DOMException && error.name === 'NotAllowedError'
-        ? 'Camera permission was denied. Enable camera access and reload the Studio.'
-        : 'Unable to open the camera. It may be unavailable or in use by another app.');
+    if (recordingSessionRef.current.isRecording()) {
+      recordingSessionRef.current.stop();
+      setRecordingError('切换摄像头前已停止录制，片段会保留在录制预览中');
     }
+    await cameraSessionRef.current.start(video, mode, (nextStatus, message) => {
+      if (nextStatus === 'loading') {
+        quadRef.current.reset();
+        quadScrubRef.current = undefined;
+        setQuadPreview(false);
+        trackerRef.current?.reset();
+        snapshotRef.current = undefined;
+        gestureRef.current = new GestureController(gestureRef.current.getTransform());
+      }
+      setStatus(nextStatus);
+      setStatusMessage(message);
+    });
   }, []);
 
   useEffect(() => { debugVisibleRef.current = debugVisible; }, [debugVisible]);
@@ -299,7 +299,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     trackerRef.current?.setMirrored(mirror);
     rendererRef.current?.setMirror(mirror);
   }, [mirror]);
-  useEffect(() => { maskTypeRef.current = maskType; }, [maskType]);
+  useEffect(() => { maskTypeRef.current = maskType; onModeChange(maskType !== 'crossHandQuad'); }, [maskType, onModeChange]);
   useEffect(() => { effectsRef.current = effects; }, [effects]);
   useEffect(() => { presetRef.current = preset; }, [preset]);
   useEffect(() => { trailRef.current.setReleaseMode(trailReleaseMode); }, [trailReleaseMode]);
@@ -307,7 +307,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   useEffect(() => { transitionDurationRef.current = transitionDuration; }, [transitionDuration]);
 
   useEffect(() => {
-    setMirror(facingMode === 'user');
+    setMirror(true);
     void startCamera(facingMode);
   }, [facingMode, startCamera]);
 
@@ -324,6 +324,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     const video = videoRef.current;
     if (!canvas || !video) return;
     let disposed = false;
+    let trackingFailed = false;
     let lastFpsUpdate = performance.now();
     let frames = 0;
     let fps = 60;
@@ -349,6 +350,13 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       return;
     }
 
+    setTrackingReady(false);
+    setTrackingError('');
+    snapshotRef.current = undefined;
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
+    quadRef.current.reset();
+    gestureRef.current = new GestureController(gestureRef.current.getTransform());
     const tracker = new HandTracker();
     tracker.setMirrored(mirrorRef.current);
     trackerRef.current = tracker;
@@ -358,9 +366,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         return;
       }
       setTrackingReady(true);
+      setTrackingError('');
     }).catch((error) => {
       console.error(error);
-      if (!disposed) setTrackingReady(false);
+      if (!disposed) {
+        trackingFailed = true;
+        setTrackingReady(false);
+        setTrackingError('手部模型加载失败，摄像头仍可使用。请检查网络后重试');
+      }
     });
 
     const frame = (now: number) => {
@@ -369,11 +382,26 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       const renderer = rendererRef.current;
       const rect = canvas.getBoundingClientRect();
       tracker.setDisplayGeometry(video.videoWidth || 1, video.videoHeight || 1, rect.width, rect.height);
-      const snapshot = tracker.detect(video, now, 26);
+      let snapshot: TrackingSnapshot | null = null;
+      try {
+        snapshot = trackingFailed ? { hands: [], timestamp: now, trackingFps: 0 } : tracker.detect(video, now, 26);
+      } catch (error) {
+        console.error('[tracking] Detection failed; camera rendering continues.', error);
+        trackingFailed = true;
+        setTrackingReady(false);
+        setTrackingError('手部追踪中断，请重试；摄像头仍可使用');
+        tracker.close();
+        snapshot = { hands: [], timestamp: now, trackingFps: 0 };
+      }
 
+      if (!snapshot && video.readyState < 2) snapshot = { hands: [], timestamp: now, trackingFps: 0 };
       if (snapshot) {
         snapshotRef.current = snapshot;
-        const gesture = gestureRef.current.update(snapshot, maskTypeRef.current === 'trail', rect.width / Math.max(1, rect.height));
+        quadRef.current.update(snapshot, rect.width / Math.max(1, rect.height));
+        const isQuad = maskTypeRef.current === 'crossHandQuad';
+        const gesture = isQuad
+          ? { state: 'IDLE' as const, transform: gestureRef.current.getTransform(), handSpeed: Math.max(0, ...snapshot.hands.map((h) => h.speed)), swipe: 0 as const, pinchStarted: false, released: false, trailPoint: undefined, hoverPoint: undefined }
+          : gestureRef.current.update(snapshot, maskTypeRef.current === 'trail', rect.width / Math.max(1, rect.height));
         const advanceTutorial = (next: number) => {
           if (next > tutorialStepRef.current) {
             tutorialStepRef.current = next;
@@ -424,6 +452,12 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         };
       }
 
+      if (maskTypeRef.current === 'crossHandQuad') {
+        lastLiveState.quad = quadScrubRef.current ?? quadRef.current.sample(now);
+        const points = lastLiveState.quad.points;
+        if (points) lastLiveState.transform = { ...lastLiveState.transform, x: points.reduce((v,p)=>v+p.x,0)/4, y: points.reduce((v,p)=>v+p.y,0)/4 };
+        lastLiveState.effects = { ...lastLiveState.effects, invertMask: false };
+      } else lastLiveState.quad = undefined;
       motionRef.current.capture(lastLiveState, now);
       let renderState = lastLiveState;
       const playbackFrame = motionRef.current.sample(now);
@@ -441,6 +475,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         renderState = {
           ...lastLiveState,
           maskType: playbackFrame.maskType,
+          quad: cloneQuad(playbackFrame.quad),
           transform: { ...playbackFrame.transform },
           effects: cloneEffects(playbackFrame.effects),
           gestureState: playbackFrame.gestureState,
@@ -457,7 +492,12 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
       let alternate: TexImageSource | undefined = altSourceRef.current;
       if (presetRef.current === 'freeze') alternate = frozenRef.current ? freezeCanvasRef.current : video;
+      renderState = { ...renderState, alternateIsCamera: !alternate || alternate === video || alternate === freezeCanvasRef.current };
       renderer?.render(video, alternate, renderState);
+      if (recordingSessionRef.current.isRecording() && canvas.dataset.vfxLive !== 'true') {
+        recordingSessionRef.current.stop();
+        setRecordingError('特效画面已中断，已停止录制以避免录入静止或空白画面');
+      }
 
       if (debugVisibleRef.current && debugCanvasRef.current) drawTrackingDebug(debugCanvasRef.current, snapshotRef.current, video, mirrorRef.current);
       else if (debugCanvasRef.current) debugCanvasRef.current.getContext('2d')?.clearRect(0, 0, debugCanvasRef.current.width, debugCanvasRef.current.height);
@@ -479,6 +519,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
       if (now - lastDebugUi > 180) {
         const hand = snapshotRef.current?.hands[0];
+        setQuadStatus(renderState.quad?.status ?? 'waiting');
         setDebug({
           fps,
           trackingFps: snapshotRef.current?.trackingFps ?? 0,
@@ -512,10 +553,13 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       rendererRef.current = undefined;
       trackerRef.current = undefined;
     };
-  }, [captureFreeze, cyclePreset]);
+  }, [captureFreeze, cyclePreset, trackingRetry]);
 
   useEffect(() => () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraSessionRef.current.dispose();
+    recordingSessionRef.current.dispose();
+    if (sceneMotionRecorder.isRecording()) sceneMotionRecorder.stop(getSceneState().scene);
+    sceneMotionRecorder.stopPlayback();
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
   }, []);
 
@@ -543,34 +587,31 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
   const startRecording = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !('captureStream' in canvas) || typeof MediaRecorder === 'undefined') return;
-    recordingChunksRef.current = [];
+    if (!canvas || canvas.dataset.vfxLive !== 'true') {
+      setRecordingError('当前为原始相机或画面尚未就绪。请恢复特效画面后录制');
+      return;
+    }
+    setRecordingError('');
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
     setRecordingUrl(undefined);
-    const stream = canvas.captureStream(60);
-    const mimeType = supportedMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 12_000_000 } : undefined);
-    recorder.ondataavailable = (event) => {
-      if (event.data.size) recordingChunksRef.current.push(event.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || 'video/webm' });
+    const started = recordingSessionRef.current.start(canvas, (blob) => {
       const url = URL.createObjectURL(blob);
       objectUrlsRef.current.push(url);
+      setRecordingMime(blob.type);
       setRecordingUrl(url);
       setRecording(false);
-      stream.getTracks().forEach((track) => track.stop());
-    };
-    recorder.start(250);
-    mediaRecorderRef.current = recorder;
-    setRecording(true);
+    }, (error) => {
+      setRecording(false);
+      setRecordingError(error instanceof Error ? error.message : '录制失败，请降低画质后重试');
+    });
+    setRecording(started);
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state !== 'inactive') mediaRecorderRef.current?.stop();
-  };
+  const stopRecording = () => recordingSessionRef.current.stop();
 
   const startMotionRecording = () => {
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
     motionRef.current.start();
     setMotionRecording(true);
     setMotionPlaying(false);
@@ -585,12 +626,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   };
 
   const playMotion = (mode: PlaybackMode) => {
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
     setMotionMode(mode);
     trailRef.current.clear();
     if (motionRef.current.play(mode)) setMotionPlaying(true);
   };
 
   const stopMotionPlayback = () => {
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
     const frame = motionRef.current.sample();
     motionRef.current.stopPlayback();
     if (frame) gestureRef.current.setTransform(frame.transform);
@@ -599,6 +644,8 @@ export default function Studio({ onExit }: { onExit: () => void }) {
   };
 
   const clearMotion = () => {
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
     motionRef.current.clear();
     setMotionRecording(false);
     setMotionPlaying(false);
@@ -618,6 +665,8 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     gestureRef.current.setTransform(frame.transform);
     maskTypeRef.current = frame.maskType;
     setMaskType(frame.maskType);
+    quadScrubRef.current = cloneQuad(frame.quad);
+    setQuadPreview(frame.maskType === 'crossHandQuad');
     const scrubEffects = cloneEffects(frame.effects);
     effectsRef.current = scrubEffects;
     setEffects(scrubEffects);
@@ -693,6 +742,9 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       if (needsExternalMedia) importedEffects.useAlternateMedia = false;
       effectsRef.current = importedEffects;
       setEffects(importedEffects);
+      quadScrubRef.current = undefined;
+      setQuadPreview(false);
+      quadRef.current.reset();
       altSourceRef.current = undefined;
       frozenRef.current = false;
       setAltMediaName(needsExternalMedia ? 'Re-select alternate media' : 'No alternate media');
@@ -722,6 +774,16 @@ export default function Studio({ onExit }: { onExit: () => void }) {
     }
   };
 
+  const selectMaskType = (type: MaskType) => {
+    if (type === 'crossHandQuad' && (sceneMotionRecorder.isPlaying() || sceneMotionRecorder.isRecording())) {
+      setRecordingError('请先停止场景运动录制或播放，再切换四指尖窗口');
+      return;
+    }
+    quadScrubRef.current = undefined;
+    setQuadPreview(false);
+    setMaskType(type);
+  };
+
   const statusClass = status === 'ready' ? 'ok' : status === 'error' ? 'bad' : 'loading';
   const tutorialText = useMemo(() => [
     'Show your hand',
@@ -739,6 +801,12 @@ export default function Studio({ onExit }: { onExit: () => void }) {
       <canvas ref={canvasRef} className="vfx-canvas" />
       <canvas ref={debugCanvasRef} className="tracking-canvas" />
 
+      <div className="interaction-mode glass-panel" aria-label="交互模式">
+        <button className={maskType === 'crossHandQuad' ? 'selected' : ''} onClick={() => selectMaskType('crossHandQuad')}>双手四指尖窗口</button>
+        <button className={maskType !== 'crossHandQuad' ? 'selected' : ''} onClick={() => selectMaskType('portal')}>高级蒙版 / 原有功能</button>
+        {maskType === 'crossHandQuad' && !quadPreview && <small>{({waiting:'请伸出双手，张开食指与拇指',tracking:'四指尖已连接 · 特效仅在窗口内',holding:'短暂丢手 · 正在等待',lost:'追踪已过期 · 请把双手放回画面',invalid:'四边形交叉或过小 · 请重新展开'})[quadStatus]}</small>}
+        {quadPreview && <button onClick={() => { quadScrubRef.current = undefined; setQuadPreview(false); }}>关键帧预览中 · 恢复实时跟手</button>}
+      </div>
       <header className="studio-topbar glass-panel">
         <button className="brand-button" onClick={onExit} aria-label="Exit studio">
           <span className="brand-mark"><CircleDot size={17} /></span>
@@ -762,7 +830,14 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         </section>
       )}
 
-      {status !== 'error' && tutorialStep < 4 && (
+      {trackingError && (
+        <div className="tutorial glass-panel" role="status">
+          <strong>{trackingError}</strong>
+          <button onClick={() => setTrackingRetry((value) => value + 1)}>重试手部追踪</button>
+        </div>
+      )}
+      {recordingError && <div className="recording-warning glass-panel" role="alert">{recordingError}</div>}
+      {maskType !== 'crossHandQuad' && !trackingError && status !== 'error' && tutorialStep < 4 && (
         <div className="tutorial glass-panel"><span>0{tutorialStep + 1}</span><strong>{tutorialText}</strong><small>{trackingReady ? 'Hand tracking active' : 'Loading hand model…'}</small></div>
       )}
 
@@ -802,20 +877,21 @@ export default function Studio({ onExit }: { onExit: () => void }) {
 
             <EffectStackEditor effects={effects} onChange={setEffects} />
 
+            {preset === 'freeze' && <button className="secondary-button" onClick={captureFreeze}>冻结当前帧 / 更新冻结画面</button>}
             <span className="eyebrow">TEMPORAL FX</span>
             <div className="segmented-grid">
               {TEMPORAL_MODES.map((mode) => <button key={mode} className={effects.temporalMode === mode ? 'selected' : ''} onClick={() => setEffects((e) => ({ ...e, temporalMode: mode }))}>{temporalLabel(mode)}</button>)}
             </div>
             {effects.temporalMode !== 'none' && <Range label="History delay (ms)" value={effects.temporalDelayMs} min={150} max={2000} step={50} onChange={(value) => setEffects((e) => ({ ...e, temporalDelayMs: value }))} />}
             {(effects.temporalMode === 'echo' || effects.temporalMode === 'afterImage') && <Range label="Temporal mix" value={effects.temporalMix} min={0.05} max={1} step={0.05} onChange={(value) => setEffects((e) => ({ ...e, temporalMix: value }))} />}
-            <Toggle label="Invert mask" checked={effects.invertMask} onChange={(value) => setEffects((e) => ({ ...e, invertMask: value }))} />
+            {maskType !== 'crossHandQuad' && <Toggle label="Invert mask" checked={effects.invertMask} onChange={(value) => setEffects((e) => ({ ...e, invertMask: value }))} />}
             <p className="panel-note">Manual preset changes, swipe changes and Carousel all snapshot the previous processed GPU texture first. The selected transition is rendered into the final canvas, so recordings include it.</p>
           </>
         )}
 
         {panel === 'mask' && (
           <>
-            <div className="segmented-grid">{(['circle', 'blob', 'portal', 'trail'] as MaskType[]).map((type) => <button key={type} className={maskType === type ? 'selected' : ''} onClick={() => setMaskType(type)}>{type}</button>)}</div>
+            <div className="segmented-grid">{(['crossHandQuad', 'circle', 'blob', 'portal', 'trail'] as MaskType[]).map((type) => <button key={type} className={maskType === type ? 'selected' : ''} onClick={() => selectMaskType(type)}>{type}</button>)}</div>
             {maskType === 'trail' && (
               <>
                 <span className="eyebrow">TRAIL RELEASE</span>
@@ -865,7 +941,7 @@ export default function Studio({ onExit }: { onExit: () => void }) {
         {panel === 'record' && (
           <div className="record-panel">
             {!recording ? <button className="record-button" onClick={startRecording}><Radio size={18} /> Start video recording</button> : <button className="record-button recording" onClick={stopRecording}><Square size={17} fill="currentColor" /> Stop recording</button>}
-            {recordingUrl && <div className="record-preview"><video src={recordingUrl} controls playsInline /><a className="secondary-button" href={recordingUrl} download={`vector-keyframe-${Date.now()}.webm`}>Save WebM</a></div>}
+            {recordingUrl && <div className="record-preview"><video src={recordingUrl} controls playsInline /><a className="secondary-button" href={recordingUrl} download={`vector-keyframe-${Date.now()}.${recordingMime.includes('mp4') ? 'mp4' : 'webm'}`}>保存视频</a></div>}
             <p className="panel-note">Video recording captures only the final WebGL canvas: camera + historical/alternate layers + ordered effect passes + transitions + mask + edge VFX. Studio UI and debug overlays are excluded.</p>
           </div>
         )}

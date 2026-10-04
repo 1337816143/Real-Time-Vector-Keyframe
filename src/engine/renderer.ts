@@ -1,3 +1,4 @@
+import { QUAD_UNIFORMS, QUAD_SDF } from './quadShader';
 import { sampleClosedCurve } from './bezier';
 import type { SceneMaskNode } from './scene';
 import type {
@@ -35,6 +36,7 @@ uniform vec2 uCameraSize;
 uniform vec2 uAltSize;
 uniform float uMirror;
 uniform float uUseAlternate;
+uniform float uAlternateMirror;
 uniform int uTemporalMode;
 uniform float uTemporalMix;
 
@@ -61,7 +63,11 @@ vec2 cameraUv(vec2 uv) {
 vec3 cameraNow(vec2 uv) { return texture(uCamera, cameraUv(uv)).rgb; }
 vec3 historyA(vec2 uv) { return texture(uHistoryA, cameraUv(uv)).rgb; }
 vec3 historyB(vec2 uv) { return texture(uHistoryB, cameraUv(uv)).rgb; }
-vec3 alternate(vec2 uv) { return texture(uAlternate, clamp(coverUv(uv, uAltSize), vec2(0.001), vec2(0.999))).rgb; }
+vec3 alternate(vec2 uv) {
+  vec2 sourceUv = coverUv(uv, uAltSize);
+  if (uAlternateMirror > 0.5) sourceUv.x = 1.0 - sourceUv.x;
+  return texture(uAlternate, clamp(sourceUv, vec2(0.001), vec2(0.999))).rgb;
+}
 
 void main() {
   vec3 color;
@@ -161,6 +167,7 @@ uniform vec2 uMaskCenter;
 uniform float uMaskScale;
 uniform float uMaskRotation;
 uniform int uMaskType;
+${QUAD_UNIFORMS}
 uniform float uHandSpeed;
 uniform float uGlow;
 uniform float uInvertMask;
@@ -209,6 +216,8 @@ float segmentDistance(vec2 p, vec2 a, vec2 b) {
   return length(pa - ba * h);
 }
 
+${QUAD_SDF}
+
 float capsuleSdf(vec2 p, vec2 a, vec2 b, float r) {
   return segmentDistance(p, a, b) - r;
 }
@@ -241,6 +250,7 @@ float customMaskSdf(vec2 metricPoint, float scale) {
 }
 
 float maskSdf(vec2 uv) {
+  if (uMaskType == 5) return quadSdf(uv);
   float aspect = uViewport.x / max(1.0, uViewport.y);
   vec2 p = uv - uMaskCenter;
   p.x *= aspect;
@@ -331,9 +341,10 @@ void main() {
   vec3 effect = transitionEffect(vUv);
   float sd = maskSdf(vUv);
   float defaultFeather = 0.0045 + min(uHandSpeed, 2.0) * 0.0015;
-  float feather = uMaskType == 4 ? max(0.00015, uCustomFeather) : defaultFeather;
+  float feather = uMaskType == 5 ? 1.5 / max(1.0, uViewport.y) : uMaskType == 4 ? max(0.00015, uCustomFeather) : defaultFeather;
   float maskAlpha = 1.0 - smoothstep(-feather, feather, sd);
-  if (uInvertMask > 0.5) maskAlpha = 1.0 - maskAlpha;
+  if (uInvertMask > 0.5 && uMaskType != 5) maskAlpha = 1.0 - maskAlpha;
+  if (uMaskType == 5) maskAlpha *= uQuadOpacity;
   vec3 color = mix(base, effect, maskAlpha);
 
   float edge = exp(-abs(sd) * (125.0 / max(0.12, uMaskScale))) * uGlow;
@@ -448,6 +459,7 @@ export class VfxRenderer {
   private compositeProgram: WebGLProgram;
   private cameraTexture: WebGLTexture;
   private alternateTexture: WebGLTexture;
+  private alternateIsCamera = false;
   private history: HistorySlot[];
   private historyCursor = 0;
   private lastHistoryCapture = -Infinity;
@@ -622,6 +634,7 @@ export class VfxRenderer {
     if (camera.readyState < 2) return false;
     this.resize();
     this.upload(this.cameraTexture, camera, this.cameraSize);
+    this.alternateIsCamera = !alternate || alternate === camera;
     this.upload(this.alternateTexture, alternate ?? camera, this.altSize);
     this.captureHistory(camera, now);
     return true;
@@ -677,6 +690,7 @@ export class VfxRenderer {
     gl.uniform2f(this.uniform(program, 'uAltSize'), this.altSize[0], this.altSize[1]);
     gl.uniform1f(this.uniform(program, 'uMirror'), this.mirror ? 1 : 0);
     gl.uniform1f(this.uniform(program, 'uUseAlternate'), state.effects.useAlternateMedia ? 1 : 0);
+    gl.uniform1f(this.uniform(program, 'uAlternateMirror'), this.mirror && (this.alternateIsCamera || state.alternateIsCamera) ? 1 : 0);
     gl.uniform1i(this.uniform(program, 'uTemporalMode'), TEMPORAL_MODE[state.effects.temporalMode]);
     gl.uniform1f(this.uniform(program, 'uTemporalMix'), state.effects.temporalMix);
     this.drawTo(this.ping.framebuffer);
@@ -745,8 +759,10 @@ export class VfxRenderer {
     gl.uniform2f(this.uniform(program, 'uMaskCenter'), state.transform.x, 1 - state.transform.y);
     gl.uniform1f(this.uniform(program, 'uMaskScale'), state.transform.scale);
     gl.uniform1f(this.uniform(program, 'uMaskRotation'), -state.transform.rotation);
-    const maskType = state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : state.maskType === 'trail' ? 3 : 4;
+    const maskType = state.maskType === 'circle' ? 0 : state.maskType === 'blob' ? 1 : state.maskType === 'portal' ? 2 : state.maskType === 'trail' ? 3 : state.maskType === 'crossHandQuad' ? 5 : 4;
     gl.uniform1i(this.uniform(program, 'uMaskType'), maskType);
+    gl.uniform2fv(this.uniform(program, 'uQuad[0]'), new Float32Array((state.quad?.points ?? Array.from({length:4}, () => ({x:0,y:0}))).flatMap((p) => [p.x, 1-p.y])));
+    gl.uniform1f(this.uniform(program, 'uQuadOpacity'), state.quad?.points ? state.quad.opacity : 0);
     gl.uniform1f(this.uniform(program, 'uHandSpeed'), state.handSpeed);
     gl.uniform1f(this.uniform(program, 'uGlow'), state.effects.glow);
     gl.uniform1f(this.uniform(program, 'uInvertMask'), state.effects.invertMask ? 1 : 0);

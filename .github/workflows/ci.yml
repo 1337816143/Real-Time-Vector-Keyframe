@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -11,31 +12,44 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Install dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Deterministic geometry and resource lifecycle regressions
+        run: npm test
+      - name: Build production and actual-engine GPU fixture
+        run: |
+          npm run build
+          npm run test:gpu:fixture
       - name: Install browser regression runner
         run: |
           python3 -m venv .browser-venv
           .browser-venv/bin/pip install --disable-pip-version-check playwright==1.57.0
           .browser-venv/bin/python -m playwright install --with-deps chromium
-      - name: Studio startup, Chinese UI and mirror regressions
+      - name: Production startup, Chinese UI and mirror regressions (synthetic media)
         run: timeout 180s .browser-venv/bin/python tests/browser_smoke.py --require-gpu
-      - name: Save tested build and browser evidence
+      - name: Real WebGL quad pixels (synthetic media, no real camera or model)
+        run: timeout 120s .browser-venv/bin/python tests/quad_gpu.py
+      - name: Record exact tested build identity
+        run: |
+          printf '{"commit":"%s","run_id":"%s","validation":"synthetic Chromium WebGL; hardware/model unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.json
+          (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) > test-results/tested-dist.sha256
+      - name: Save only tested deployable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-dist-${{ github.run_id }}
+          path: dist/
+          retention-days: 14
+      - name: Save test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: studio-browser-${{ github.run_id }}
-          path: |
-            dist/
-            test-results/browser/
-          retention-days: 7
+          path: test-results/
+          retention-days: 14

@@ -1,3 +1,4 @@
+import type { CrossHandQuadFrame } from './crossHandQuad';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 
 export type GestureState =
@@ -10,7 +11,7 @@ export type GestureState =
   | 'RELEASE'
   | 'LOST';
 
-export type MaskType = 'circle' | 'blob' | 'portal' | 'trail' | 'custom';
+export type MaskType = 'circle' | 'blob' | 'portal' | 'trail' | 'custom' | 'crossHandQuad';
 export type TemporalMode = 'none' | 'timeWindow' | 'echo' | 'afterImage';
 export type PlaybackMode = 'once' | 'loop' | 'reverse' | 'pingpong';
 export type TrailReleaseMode = 'hold' | 'dissipate' | 'close' | 'expand' | 'burst' | 'shrink';
@@ -43,6 +44,9 @@ export interface HandFrame {
   id: number;
   handedness: 'Left' | 'Right' | 'Unknown';
   landmarks: NormalizedLandmark[];
+  handednessScore?: number;
+  indexTip?: Vec2;
+  thumbTip?: Vec2;
   palm: Vec2;
   pinch: Vec2;
   pinchDistance: number;
@@ -104,6 +108,8 @@ export interface EngineDebug {
 }
 
 export interface RenderState {
+  alternateIsCamera?: boolean;
+  quad?: CrossHandQuadFrame;
   maskType: MaskType;
   transform: MaskTransform;
   effects: EffectSettings;
@@ -118,6 +124,7 @@ export interface RenderState {
 }
 
 export interface MotionKeyframe {
+  quad?: CrossHandQuadFrame;
   t: number;
   maskType: MaskType;
   transform: MaskTransform;

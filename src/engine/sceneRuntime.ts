@@ -17,7 +17,7 @@ export function installSceneRuntime() {
   ) {
     const sceneState = getSceneState();
     const visible = sceneState.scene.nodes.some((node) => node.visible);
-    if (!sceneState.enabled || !visible) return fallbackRender.call(this, camera, alternate, state);
+    if (state.maskType === 'crossHandQuad' || !sceneState.enabled || !visible) return fallbackRender.call(this, camera, alternate, state);
     const timeMs = effectSequenceRenderTime(state.time);
     const nodes = applyEffectSequence(sceneState.scene.nodes, timeMs).map((node) => ({
       ...node,

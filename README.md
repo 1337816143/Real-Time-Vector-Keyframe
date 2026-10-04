@@ -527,3 +527,40 @@ Future work remains future work rather than placeholder UI:
 4. Add independent per-node transition ownership/timelines.
 5. Evaluate Fire / Ice edge families against measured GPU budget.
 6. Split expensive tracking/render work into Worker/OffscreenCanvas paths where browser support makes it worthwhile.
+
+## 2026-10-04 reliability + Cross-Hand Quad update (v0.10.1)
+
+The default interaction now uses **LI → RI → RT → LT → LI**: left index,
+right index, right thumb and left thumb. The four actual fingertip positions
+form a deformable, potentially concave simple quadrilateral, not a bounding
+rectangle and not a pinch-dragged Portal. Existing advanced single-mask,
+Bezier, Scene, persistent Scene Trail, Scene Motion, Effect Sequence and
+per-mask effect-transition workflows remain available through Advanced Mode.
+The older v0.9 sections above describe the inherited architecture; they are
+not a complete feature ledger for this newer baseline.
+
+- A shared polygon SDF drives the real WebGL composite and final edge pass.
+- Effects remain inside the quad; its outside remains the live camera.
+- Degenerate/self-intersecting geometry is flagged without reordering corners.
+- Missing or stale input holds briefly, then fades by 250 ms. Render FPS alone
+  never makes an old hand sample fresh.
+- Large movement is applied directly; only small jitter receives light filtering.
+- Quad geometry is included in single-mask Motion and project JSON keyframes.
+- Camera request generations stop stale streams, including requests completing
+  after exit; recording owns and releases its own capture tracks.
+- Confident anatomical hand labels plus temporal geometry protect identity;
+  ambiguous/occluded tracking is still a real-device validation requirement.
+- Pinch distances use aspect-correct metric coordinates in the preserved legacy mode.
+- Raw-camera/fallback mode cannot start a misleading GPU-canvas recording;
+  loss of the composited output stops an active recording with a visible notice.
+- Switching cameras preserves a normally stopped recording instead of silently discarding it.
+
+**Validation boundary:** deterministic synthetic landmark/resource tests and
+Chromium synthetic-video shader tests do not establish real camera accuracy,
+MediaPipe throughput, phone compatibility, thermal performance or end-to-end
+latency. Spider-Man face replacement, Fire/Ice and worker inference remain
+unimplemented. No camera frames are uploaded; microphone access is not requested.
+
+`npm test` runs the deterministic regressions. CI uses the lockfile and Node 24,
+tests the production bundle plus actual quad shaders, and makes Pages consume
+that exact successful artifact. `build-info.json` records its commit and run.

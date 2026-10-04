@@ -25,6 +25,7 @@ export class GestureController {
   private state: GestureState = 'IDLE';
   private transform: MaskTransform;
   private pinchActive = false;
+  private primaryId?: number;
   private grabOffset: Vec2 = { x: 0, y: 0 };
   private lastSeenAt = 0;
   private lastUpdateAt = performance.now();
@@ -56,7 +57,12 @@ export class GestureController {
     const now = snapshot.timestamp || performance.now();
     const dt = Math.max(1, now - this.lastUpdateAt);
     this.lastUpdateAt = now;
-    const hands = snapshot.hands;
+    const primary = snapshot.hands.find((hand) => hand.id === this.primaryId);
+    // A grabbed hand disappearing must not silently transfer control to another hand.
+    const hands = !primary && this.pinchActive
+      ? []
+      : primary ? [primary, ...snapshot.hands.filter((hand) => hand.id !== primary.id)] : snapshot.hands;
+    if (hands.length && !primary) this.primaryId = hands[0].id;
     let swipe: -1 | 0 | 1 = 0;
     let pinchStarted = false;
     let released = false;
@@ -73,6 +79,7 @@ export class GestureController {
         this.pinchActive = false;
         this.twoHandBase = undefined;
         this.state = 'IDLE';
+        this.primaryId = undefined;
       } else {
         this.state = 'LOST';
       }
@@ -80,25 +87,25 @@ export class GestureController {
     }
 
     this.lastSeenAt = now;
-    const primary = hands[0];
-    hoverPoint = primary.pinch;
-    handSpeed = primary.speed;
+    const primaryHand = hands[0];
+    hoverPoint = primaryHand.pinch;
+    handSpeed = primaryHand.speed;
 
     const isPinching = this.pinchActive
-      ? primary.normalizedPinchDistance < this.pinchOff
-      : primary.normalizedPinchDistance < this.pinchOn;
+      ? primaryHand.normalizedPinchDistance < this.pinchOff
+      : primaryHand.normalizedPinchDistance < this.pinchOn;
 
     const metric = (point: Vec2): Vec2 => ({ x: point.x * viewportAspect, y: point.y });
 
     if (!this.pinchActive && isPinching) {
-      const nearMask = distance(metric(primary.pinch), metric(this.transform)) < Math.max(0.105, this.transform.scale * 1.55);
+      const nearMask = distance(metric(primaryHand.pinch), metric(this.transform)) < Math.max(0.105, this.transform.scale * 1.55);
       if (allowGrabAnywhere || nearMask) {
         this.pinchActive = true;
         pinchStarted = true;
         this.state = 'PINCH_START';
         this.grabOffset = {
-          x: this.transform.x - primary.pinch.x,
-          y: this.transform.y - primary.pinch.y,
+          x: this.transform.x - primaryHand.pinch.x,
+          y: this.transform.y - primaryHand.pinch.y,
         };
       }
     }
@@ -134,24 +141,24 @@ export class GestureController {
       this.state = 'TWO_HAND_TRANSFORM';
     } else if (this.pinchActive) {
       this.twoHandBase = undefined;
-      const targetX = primary.pinch.x + this.grabOffset.x;
-      const targetY = primary.pinch.y + this.grabOffset.y;
-      const adaptive = Math.min(0.72, 0.26 + Math.min(primary.speed * 0.75, 0.46));
+      const targetX = primaryHand.pinch.x + this.grabOffset.x;
+      const targetY = primaryHand.pinch.y + this.grabOffset.y;
+      const adaptive = Math.min(0.72, 0.26 + Math.min(primaryHand.speed * 0.75, 0.46));
       this.transform.x = lerp(this.transform.x, targetX, adaptive);
       this.transform.y = lerp(this.transform.y, targetY, adaptive);
       this.state = this.state === 'PINCH_START' ? 'GRABBED' : 'DRAGGING';
       trailPoint = {
-        x: primary.pinch.x,
-        y: primary.pinch.y,
-        width: Math.min(0.085, 0.022 + primary.speed * 0.055),
+        x: primaryHand.pinch.x,
+        y: primaryHand.pinch.y,
+        width: Math.min(0.085, 0.022 + primaryHand.speed * 0.055),
       };
     } else {
       this.state = 'HOVER';
     }
 
-    if (!this.pinchActive && primary.speed > 0.9 && now - this.lastSwipeAt > 650) {
-      const vx = primary.velocity.x;
-      if (Math.abs(vx) > Math.abs(primary.velocity.y) * 1.3) {
+    if (!this.pinchActive && primaryHand.speed > 0.9 && now - this.lastSwipeAt > 650) {
+      const vx = primaryHand.velocity.x;
+      if (Math.abs(vx) > Math.abs(primaryHand.velocity.y) * 1.3) {
         swipe = vx > 0 ? 1 : -1;
         this.lastSwipeAt = now;
       }

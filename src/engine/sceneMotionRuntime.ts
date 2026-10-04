@@ -15,6 +15,7 @@ export function installSceneMotionRuntime() {
     alternate: TexImageSource | undefined,
     state: RenderState,
   ) {
+    if (state.maskType === 'crossHandQuad') return previousRender.call(this, camera, alternate, state);
     const sceneState = getSceneState();
     let renderState = state;
 

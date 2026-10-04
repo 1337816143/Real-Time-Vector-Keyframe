@@ -1,3 +1,4 @@
+import { QUAD_UNIFORMS, QUAD_SDF } from './quadShader';
 import { sampleClosedCurve } from './bezier';
 import { applyEffectSequence, effectSequenceRenderTime } from './effectSequence';
 import { VfxRenderer } from './renderer';
@@ -29,6 +30,7 @@ uniform vec2 uMaskCenter;
 uniform float uMaskScale;
 uniform float uMaskRotation;
 uniform int uMaskType;
+${QUAD_UNIFORMS}
 uniform float uHandSpeed;
 uniform float uGlow;
 uniform int uMode;
@@ -51,6 +53,8 @@ float segmentDistance(vec2 p, vec2 a, vec2 b) {
   float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
   return length(pa - ba * h);
 }
+
+${QUAD_SDF}
 
 float capsuleSdf(vec2 p, vec2 a, vec2 b, float r) {
   return segmentDistance(p, a, b) - r;
@@ -81,6 +85,7 @@ float customMaskSdf(vec2 metricPoint, float scale) {
 }
 
 float maskSdf(vec2 uv) {
+  if (uMaskType == 5) return quadSdf(uv);
   float aspect = uViewport.x / max(1.0, uViewport.y);
   vec2 p = uv - uMaskCenter;
   p.x *= aspect;
@@ -180,6 +185,7 @@ void main() {
   }
 
   float alpha = clamp(amount * uGlow * (0.72 + min(uHandSpeed, 2.0) * 0.12), 0.0, 1.0);
+  if (uMaskType == 5) alpha *= uQuadOpacity;
   outColor = vec4(color, alpha);
 }`;
 
@@ -224,6 +230,7 @@ const EDGE_MODE: Record<EdgeFxMode, number> = {
 
 type EdgeShape = {
   maskType: RenderState['maskType'];
+  quad?: RenderState['quad'];
   x: number;
   y: number;
   scale: number;
@@ -269,8 +276,10 @@ class EdgePass {
     gl.uniform2f(this.uniform('uMaskCenter'), shape.x, 1 - shape.y);
     gl.uniform1f(this.uniform('uMaskScale'), shape.scale);
     gl.uniform1f(this.uniform('uMaskRotation'), -shape.rotation);
-    const maskType = shape.maskType === 'circle' ? 0 : shape.maskType === 'blob' ? 1 : shape.maskType === 'portal' ? 2 : shape.maskType === 'trail' ? 3 : 4;
+    const maskType = shape.maskType === 'circle' ? 0 : shape.maskType === 'blob' ? 1 : shape.maskType === 'portal' ? 2 : shape.maskType === 'trail' ? 3 : shape.maskType === 'crossHandQuad' ? 5 : 4;
     gl.uniform1i(this.uniform('uMaskType'), maskType);
+    gl.uniform2fv(this.uniform('uQuad[0]'), new Float32Array((shape.quad?.points ?? Array.from({length:4}, () => ({x:0,y:0}))).flatMap((p) => [p.x, 1-p.y])));
+    gl.uniform1f(this.uniform('uQuadOpacity'), shape.quad?.points ? shape.quad.opacity : 0);
     gl.uniform1f(this.uniform('uHandSpeed'), shape.handSpeed);
     gl.uniform1f(this.uniform('uGlow'), shape.effects.glow);
     gl.uniform1i(this.uniform('uMode'), EDGE_MODE[mode]);
@@ -317,6 +326,7 @@ function rendererCanvas(renderer: VfxRenderer) {
 function shapeFromState(state: RenderState): EdgeShape {
   return {
     maskType: state.maskType,
+    quad: state.quad,
     x: state.transform.x,
     y: state.transform.y,
     scale: state.transform.scale,
@@ -381,7 +391,7 @@ export function installEdgeFxRuntime() {
     }
 
     const sceneState = getSceneState();
-    if (sceneState.enabled && sceneState.scene.nodes.some((node) => node.visible)) {
+    if (state.maskType !== 'crossHandQuad' && sceneState.enabled && sceneState.scene.nodes.some((node) => node.visible)) {
       const timeMs = effectSequenceRenderTime(state.time);
       const nodes = applyEffectSequence(sceneState.scene.nodes, timeMs);
       for (const node of nodes) {

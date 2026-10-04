@@ -17,6 +17,8 @@ export function installCustomMaskRuntime() {
   ) {
     const bezier = getBezierMaskState();
 
+    if (state.maskType === 'crossHandQuad') return originalRender.call(this, camera, alternate, state);
+
     if (bezier.enabled) {
       const customState: RenderState = {
         ...state,

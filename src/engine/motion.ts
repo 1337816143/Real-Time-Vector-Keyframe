@@ -1,3 +1,4 @@
+import { cloneQuad, validQuadTopology, type QuadPoints } from './crossHandQuad';
 import type {
   EffectSettings,
   MotionKeyframe,
@@ -17,6 +18,7 @@ function cloneFrame(frame: MotionKeyframe): MotionKeyframe {
   return {
     ...frame,
     transform: { ...frame.transform },
+    quad: cloneQuad(frame.quad),
     effects: cloneEffects(frame.effects),
     interactionPoint: frame.interactionPoint ? { ...frame.interactionPoint } : undefined,
   };
@@ -48,9 +50,10 @@ function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
     Math.abs((a.effects.edgeFxSpeed ?? 1) - (b.effects.edgeFxSpeed ?? 1)) * 0.01 +
     Math.abs((a.effects.edgeFxDensity ?? 1) - (b.effects.edgeFxDensity ?? 1)) * 0.01 +
     Math.abs(a.effects.temporalMix - b.effects.temporalMix) * 0.02;
+  const quadChanged = JSON.stringify(a.quad?.points) !== JSON.stringify(b.quad?.points) || a.quad?.opacity !== b.quad?.opacity;
   const stackChanged = JSON.stringify(a.effects.effectStack) !== JSON.stringify(b.effects.effectStack);
   const edgeChanged = (a.effects.edgeFxMode ?? 'neon') !== (b.effects.edgeFxMode ?? 'neon');
-  return position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || edgeChanged || a.gestureState !== b.gestureState;
+  return quadChanged || a.maskType !== b.maskType || position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || edgeChanged || a.gestureState !== b.gestureState;
 }
 
 export class MotionRecorder {
@@ -78,6 +81,7 @@ export class MotionRecorder {
     const frame: MotionKeyframe = {
       t,
       maskType: state.maskType,
+      quad: cloneQuad(state.quad),
       transform: { ...state.transform },
       effects: cloneEffects(state.effects),
       gestureState: state.gestureState,
@@ -215,10 +219,16 @@ export class MotionRecorder {
         }
       : mix < 0.5 ? a.interactionPoint : b.interactionPoint;
     const stackSource = mix < 0.5 ? a.effects.effectStack : b.effects.effectStack;
+    let quad = cloneQuad(mix < 0.5 ? a.quad : b.quad);
+    if (a.quad?.points && b.quad?.points && a.maskType === 'crossHandQuad' && b.maskType === 'crossHandQuad') {
+      const points = a.quad.points.map((p, i) => ({x: lerp(p.x,b.quad!.points![i].x,mix), y: lerp(p.y,b.quad!.points![i].y,mix)})) as QuadPoints;
+      quad = { points, opacity: validQuadTopology(points) ? lerp(a.quad.opacity,b.quad.opacity,mix) : 0, timestamp: t, status: validQuadTopology(points) ? 'tracking' : 'invalid' };
+    }
 
     return {
       t,
       maskType: mix < 0.5 ? a.maskType : b.maskType,
+      quad,
       transform: {
         x: lerp(a.transform.x, b.transform.x, mix),
         y: lerp(a.transform.y, b.transform.y, mix),

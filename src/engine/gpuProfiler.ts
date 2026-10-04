@@ -68,7 +68,7 @@ function edgeEnabled(effects: EffectSettings) {
 
 function countPasses(state: RenderState) {
   const sceneState = getSceneState();
-  const visible = sceneState.enabled
+  const visible = state.maskType !== 'crossHandQuad' && sceneState.enabled
     ? sceneState.scene.nodes.filter((node) => node.visible).slice(0, 4)
     : [];
 

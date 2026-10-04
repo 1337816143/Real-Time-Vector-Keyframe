@@ -1,3 +1,4 @@
+import { cloneQuad, validQuadTopology, type CrossHandQuadFrame, type QuadPoints } from './crossHandQuad';
 import { DEFAULT_BEZIER_CURVE, cloneCurve } from './bezier';
 import { getBezierMaskState, setBezierMaskState } from './bezierStore';
 import { getEffectSequenceTrack, replaceEffectSequence, type EffectSequenceTrack } from './effectSequence';
@@ -68,7 +69,7 @@ type ProjectSnapshotInput = Omit<ProjectSnapshot, 'version' | 'savedAt' | 'mask'
   effectSequence?: EffectSequenceTrack;
 };
 
-const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom'];
+const MASK_TYPES: MaskType[] = ['circle', 'blob', 'portal', 'trail', 'custom', 'crossHandQuad'];
 const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
 const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
 const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'glitch', 'flash', 'liquid'];
@@ -202,6 +203,18 @@ function sanitizeEffects(value: unknown): EffectSettings {
   };
 }
 
+function sanitizeQuad(value: unknown): CrossHandQuadFrame | undefined {
+  if (!value) return undefined;
+  try {
+    const frame = object(value);
+    const raw = Array.isArray(frame.points) ? frame.points : [];
+    if (raw.length !== 4) return undefined;
+    const points = raw.map((item) => { const p = object(item); return { x: finite(p.x, NaN), y: finite(p.y, NaN) }; }) as QuadPoints;
+    const valid = validQuadTopology(points);
+    return { points: valid ? points : undefined, opacity: valid ? clamp(finite(frame.opacity, 0), 0, 1) : 0, timestamp: Math.max(0,finite(frame.timestamp,0)), status: valid ? 'tracking' : 'invalid' };
+  } catch { return undefined; }
+}
+
 function sanitizeMotion(value: unknown): MotionTrack | undefined {
   if (!value) return undefined;
   const item = object(value);
@@ -213,6 +226,7 @@ function sanitizeMotion(value: unknown): MotionTrack | undefined {
       return [{
         t: Math.max(0, finite(frame.t, 0)),
         maskType: enumValue(frame.maskType, MASK_TYPES, 'portal'),
+        quad: sanitizeQuad(frame.quad),
         transform: sanitizeTransform(frame.transform),
         effects: sanitizeEffects(frame.effects),
         gestureState: enumValue(frame.gestureState, GESTURE_STATES, 'IDLE'),
@@ -395,7 +409,7 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
     ...input,
     mask: {
       ...input.mask,
-      type: bezierState.enabled ? 'custom' : input.mask.type,
+      type: input.mask.type === 'crossHandQuad' ? 'crossHandQuad' : bezierState.enabled ? 'custom' : input.mask.type,
       transform: { ...input.mask.transform },
       customCurve: cloneCurve(customCurve),
       customFeather: clamp(input.mask.customFeather ?? bezierState.feather, 0, 0.08),
@@ -415,6 +429,7 @@ export function createProjectSnapshot(input: ProjectSnapshotInput): ProjectSnaps
       keyframes: input.motion.keyframes.map((frame) => ({
         ...frame,
         transform: { ...frame.transform },
+        quad: cloneQuad(frame.quad),
         effects: {
           ...frame.effects,
           effectStack: frame.effects.effectStack.map((node) => ({ ...node })),
