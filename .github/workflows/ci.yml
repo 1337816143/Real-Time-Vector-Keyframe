@@ -38,11 +38,11 @@ jobs:
         run: timeout 120s .browser-venv/bin/python tests/quad_gpu.py
       - name: Face preset opt-in, retry, advanced mode and exit (synthetic Worker)
         run: timeout 120s .browser-venv/bin/python tests/face_ui.py
-      - name: Actual on-demand Face Worker and blank synthetic model inference
+      - name: Actual FaceTracker with blank frames and pinned official portrait fixture
         run: timeout 120s .browser-venv/bin/python tests/face_worker.py
       - name: Record exact tested build identity
         run: |
-          printf '{"commit":"%s","run_id":"%s","validation":"synthetic Chromium WebGL + blank Face Worker inference; real people/hardware unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.json
+          printf '{"commit":"%s","run_id":"%s","validation":"synthetic WebGL + official Face Worker fixture; user camera/hardware unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.json
           (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) > test-results/tested-dist.sha256
       - name: Save only tested deployable artifact
         uses: actions/upload-artifact@v4

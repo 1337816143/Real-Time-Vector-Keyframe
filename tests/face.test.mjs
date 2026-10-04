@@ -39,3 +39,22 @@ test('face worker: cached module factory is restored before GPU-to-CPU fallback'
   const result=await createFaceTask(async delegate=>{calls.push(delegate);assert.equal(factory,token);factory=undefined;if(delegate==='GPU')throw new Error('Synthetic GPU initialization failure');return {ready:true};},()=>{factory=token;});
   assert.deepEqual(calls,['GPU','CPU']);assert.equal(result.delegate,'CPU');assert.equal(result.gpuFailure,'Synthetic GPU initialization failure');assert.equal(result.task.ready,true);
 });
+
+test('face pipeline: first positive face may warm slowly but never paints stale; subsequent deadline stays bounded',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const h=harness(t);h.tracker.setEnabled(true);const w=h.workers[0];w.emit({type:'ready'});h.tracker.submit(h.video);await settle();
+  t.mock.timers.tick(3500);assert.notEqual(h.tracker.status,'error');
+  const frame=w.messages.at(-1);h.now(4500);w.emit({type:'result',id:frame.id,timestamp:frame.timestamp,landmarks:landmarks(),inferenceMs:3500});
+  assert.equal(h.tracker.sample(4500,640,360),undefined);
+  h.now(4501);h.video.currentTime=2;h.tracker.submit(h.video);await settle();t.mock.timers.tick(3001);assert.equal(h.tracker.status,'error');
+});
+
+test('face pipeline: persistently stale warmed faces stop clearly instead of silently discarding forever',async t=>{
+  const h=harness(t);h.tracker.setEnabled(true);const w=h.workers[0];w.emit({type:'ready'});
+  for(let i=0;i<4;i++){
+    h.now(1000+i*500);h.video.currentTime=i+1;h.tracker.submit(h.video);await settle();
+    const f=w.messages.at(-1);h.now(1000+i*500+(i===0?30:300));
+    w.emit({type:'result',id:f.id,timestamp:f.timestamp,landmarks:landmarks(),inferenceMs:i===0?30:300});
+  }
+  assert.equal(h.tracker.status,'error');assert.match(h.tracker.message,/持续过慢/);assert.equal(w.terminated,true);assert.equal(h.tracker.sample(3000,640,360),undefined);
+});

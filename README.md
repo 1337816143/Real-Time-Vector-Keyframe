@@ -21,13 +21,14 @@ The default control is the exact four-fingertip polygon LI → RI → RT → LT,
 
 - Face paint is GPU-composited only within the face oval ∩ valid four-fingertip window and is recorded from the same final canvas.
 - Face Landmarker loads on demand in a separate Worker; at most one frame is in flight, sampling the newest available frame at up to 12 Hz. Stale results expire after 250 ms. These are policy limits, not measured end-to-end latency claims.
+- Startup warms up the detector on blank local frames before accepting camera frames. The first positive-face landmark inference has a bounded 15-second cold-start deadline, while every result older than 250 ms is still discarded; later frames use the 3-second watchdog. Three consecutive warmed-but-stale face results stop the effect with a clear notice. A software/slow GPU falls back to CPU; a backend whose warmed-up inference exceeds the freshness budget fails clearly instead of painting stale faces. Inputs are capped at 320 pixels wide.
 - Changing effect/mode or leaving the studio terminates the face Worker. The original carousel and gesture cycling do not automatically opt into face tracking.
 - The face preset and quad motion settings can be saved in project JSON. Face landmarks and camera media are not stored in that JSON.
 - Camera frames and landmarks stay in this browser. Initial use downloads official MediaPipe WASM/model files; the SDK may emit performance/usage statistics ([SDK notice](https://github.com/google-ai-edge/mediapipe#privacy-notice)). This is not a zero-network claim.
 
 ### Verification boundary
 
-CI exercises deterministic lifecycle/geometry/persistence tests, the real WebGL shader with synthetic landmarks, final-canvas VP9 recording/decode, production UI scenarios, and the actual official Face Landmarker Worker with a blank synthetic frame. These do not establish real-person tracking accuracy, mobile camera behavior, thermal stability, or hardware end-to-end latency. Production publication remains gated on the exact commit’s CI and tested artifact.
+CI exercises deterministic lifecycle/geometry/persistence tests, the real WebGL shader with synthetic landmarks, final-canvas VP9 recording/decode, production UI scenarios, and the actual product FaceTracker and official Face Landmarker Worker with blank synthetic frames plus a hash-pinned official public portrait test fixture. These do not establish real-person tracking accuracy, mobile camera behavior, thermal stability, or hardware end-to-end latency. Production publication remains gated on the exact commit’s CI and tested artifact.
 
 ## Preserved advanced baseline
 
