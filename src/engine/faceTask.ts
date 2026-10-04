@@ -1,6 +1,7 @@
 /** MediaPipe clears its global factory after creating a task. Restore it for each attempt. */
-export async function createFaceTask<T>(create:(delegate:'GPU'|'CPU')=>Promise<T>, restoreFactory:()=>void):Promise<{task:T;delegate:'GPU'|'CPU';gpuFailure?:string}> {
+export async function createFaceTask<T>(create:(delegate:'GPU'|'CPU')=>Promise<T>, restoreFactory:()=>void, preferred:'GPU'|'CPU'='GPU'):Promise<{task:T;delegate:'GPU'|'CPU';gpuFailure?:string}> {
   restoreFactory();
+  if(preferred==='CPU')return {task:await create('CPU'),delegate:'CPU'};
   try {return {task:await create('GPU'),delegate:'GPU'};}
   catch(error) {
     const gpuFailure=error instanceof Error?error.message:String(error);
@@ -20,4 +21,10 @@ export function measureFaceWarmup(detect:(timestamp:number)=>void, now:()=>numbe
     if(consecutive>=2)return {samples,steadyMs:Math.max(...samples.slice(-2))};
   }
   throw new Error(`warm-up exceeds freshness budget (${samples.map(n=>Math.round(n)).join(', ')} ms)`);
+}
+
+/** Software GL executes GPU inference on the CPU; use the documented CPU delegate directly. */
+export function preferredFaceDelegate(renderer:string|undefined, requested?:'GPU'|'CPU'):'GPU'|'CPU' {
+  if(requested)return requested;
+  return renderer&&/swiftshader|llvmpipe|softpipe|software rasterizer/i.test(renderer)?'CPU':'GPU';
 }

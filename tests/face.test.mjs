@@ -33,7 +33,7 @@ test('face geometry: invalid dimensions and non-simple outlines fail closed',()=
   assert.equal(faceFromLandmarks(crossed,1000,geometry),undefined);
 });
 
-const {createFaceTask,measureFaceWarmup}=await bundle('src/engine/faceTask.ts');
+const {createFaceTask,measureFaceWarmup,preferredFaceDelegate}=await bundle('src/engine/faceTask.ts');
 test('face worker: cached module factory is restored before GPU-to-CPU fallback',async()=>{
   let factory;const calls=[];const token={};
   const result=await createFaceTask(async delegate=>{calls.push(delegate);assert.equal(factory,token);factory=undefined;if(delegate==='GPU')throw new Error('Synthetic GPU initialization failure');return {ready:true};},()=>{factory=token;});
@@ -71,4 +71,20 @@ test('face warm-up: an intervening slow sample resets the consecutive streak',()
 });
 test('face warm-up: sustained slowness is bounded at four measured attempts and preserves diagnostics',()=>{
   const calls=[];let time=0;assert.throws(()=>measureFaceWarmup(timestamp=>{calls.push(timestamp);time+=300;},()=>time,200),/300, 300, 300, 300/);assert.deepEqual(calls,[0,1,2,3,4]);
+});
+
+test('face backend: software renderers select CPU, hardware/unknown retain GPU, explicit test selection wins',()=>{
+  for(const renderer of ['ANGLE (Google, Vulkan SwiftShader Device)','llvmpipe (LLVM)','softpipe','Software Rasterizer'])assert.equal(preferredFaceDelegate(renderer),'CPU');
+  for(const renderer of [undefined,'Apple M1','ANGLE (NVIDIA)'])assert.equal(preferredFaceDelegate(renderer),'GPU');
+  assert.equal(preferredFaceDelegate('SwiftShader','GPU'),'GPU');assert.equal(preferredFaceDelegate(undefined,'CPU'),'CPU');
+});
+test('face backend: explicit CPU initialization does not attempt GPU',async()=>{const seen=[];const result=await createFaceTask(async d=>{seen.push(d);return {};},()=>{},'CPU');assert.deepEqual(seen,['CPU']);assert.equal(result.delegate,'CPU');});
+test('face pipeline: stale GPU positives restart once on CPU with no old face resurrection',async t=>{
+  const h=harness(t);h.tracker.setEnabled(true);const gpu=h.workers[0];gpu.emit({type:'ready',delegate:'GPU'});
+  async function frame(worker,index,delay){h.now(1000+index*500);h.video.currentTime=index+1;h.tracker.submit(h.video);await settle();const f=worker.messages.at(-1);h.now(1000+index*500+delay);worker.emit({type:'result',id:f.id,timestamp:f.timestamp,landmarks:landmarks(),inferenceMs:delay});return f;}
+  let last;for(let i=0;i<4;i++)last=await frame(gpu,i,i===0?30:300);
+  assert.equal(h.workers.length,2);assert.equal(gpu.terminated,true);assert.equal(h.tracker.status,'loading');const cpu=h.workers[1];assert.deepEqual(cpu.messages,[{type:'init',delegate:'CPU'}]);
+  gpu.emit({type:'result',id:last.id,timestamp:2800,landmarks:landmarks()});assert.equal(h.tracker.sample(2800,640,360),undefined);
+  cpu.emit({type:'ready',delegate:'CPU'});for(let i=4;i<8;i++)await frame(cpu,i,i===4?30:300);
+  assert.equal(h.tracker.status,'error');assert.equal(h.workers.length,2);assert.equal(cpu.terminated,true);
 });

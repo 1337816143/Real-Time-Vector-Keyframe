@@ -1,5 +1,5 @@
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
-import { createFaceTask, measureFaceWarmup } from './faceTask';
+import { createFaceTask, measureFaceWarmup, preferredFaceDelegate } from './faceTask';
 import { FACE_INPUT_WIDTH, FACE_WARMUP_BUDGET_MS } from './facePolicy';
 
 const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
@@ -8,7 +8,17 @@ const context=self as unknown as {postMessage:(value:unknown)=>void;onmessage:((
 let task:FaceLandmarker|undefined;
 let initializing:Promise<void>|undefined;
 let delegate:'GPU'|'CPU'='GPU';
-async function initialize(){
+function graphicsRenderer():string|undefined {
+  let gl:WebGL2RenderingContext|null=null;
+  try {
+    gl=new OffscreenCanvas(1,1).getContext('webgl2');
+    const extension=gl?.getExtension('WEBGL_debug_renderer_info');
+    return extension?String(gl!.getParameter(extension.UNMASKED_RENDERER_WEBGL)):undefined;
+  } catch {return undefined;}
+  finally {gl?.getExtension('WEBGL_lose_context')?.loseContext();}
+}
+async function initialize(requested?:'GPU'|'CPU'){
+  const preferred=preferredFaceDelegate(requested?undefined:graphicsRenderer(),requested);
   const vision=await FilesetResolver.forVisionTasks(WASM,true);
   // Module workers cannot execute the classic UMD loader through importScripts.
   // Keep the ES-module factory because MediaPipe clears the global after use.
@@ -27,14 +37,14 @@ async function initialize(){
       warmupMs=measured.steadyMs;warmupSamples=measured.samples;
       return candidate;
     } catch(error){candidate.close();throw error;}
-  },restoreFactory);
+  },restoreFactory,preferred);
   task=created.task;delegate=created.delegate;
   context.postMessage({type:'ready',delegate,gpuFailure:created.gpuFailure,warmupMs,warmupSamples});
 }
 context.onmessage=(event)=>{
   const message=event.data;
   if(message.type==='init'){
-    initializing??=initialize().catch(error=>context.postMessage({type:'error',message:String(error).includes('freshness budget')?'此设备人脸推理过慢，已停止面罩；四指尖窗口仍可使用':'人脸模型加载失败，请检查网络后重试',diagnostic:error instanceof Error?error.message:String(error)}));
+    initializing??=initialize(message.delegate==='CPU'?'CPU':message.delegate==='GPU'?'GPU':undefined).catch(error=>context.postMessage({type:'error',message:String(error).includes('freshness budget')?'此设备人脸推理过慢，已停止面罩；四指尖窗口仍可使用':'人脸模型加载失败，请检查网络后重试',diagnostic:error instanceof Error?error.message:String(error)}));
   } else if(message.type==='frame'){
     const bitmap=message.bitmap as ImageBitmap;
     try {

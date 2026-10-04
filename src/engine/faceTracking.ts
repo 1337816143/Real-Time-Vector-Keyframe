@@ -14,6 +14,7 @@ export class FaceTracker {
   private busy=false;
   private faceWarmed=false;
   private slowFaceStreak=0;
+  private cpuFallbackUsed=false;
   private lastSubmitAt=-Infinity;
   private lastVideoTime=-1;
   private timeout?:ReturnType<typeof setTimeout>;
@@ -23,9 +24,9 @@ export class FaceTracker {
   private now(){return this.dependencies.clock?.()??performance.now();}
   private clearTimer(){if(this.timeout)clearTimeout(this.timeout);this.timeout=undefined;}
   private fail(message:string){this.epoch++;this.clearTimer();this.worker?.terminate();this.worker=undefined;this.busy=false;this.pending=undefined;this.raw=undefined;this.status='error';this.message=message;}
-  setEnabled(enabled:boolean){
+  setEnabled(enabled:boolean, preferCpu=false){
     if(enabled===this.enabled)return;
-    this.epoch++;this.clearTimer();this.worker?.terminate();this.worker=undefined;this.enabled=enabled;this.faceWarmed=false;this.slowFaceStreak=0;this.pending=undefined;this.busy=false;this.raw=undefined;this.lastSubmitAt=-Infinity;this.lastVideoTime=-1;this.inferenceMs=undefined;
+    this.epoch++;this.clearTimer();this.worker?.terminate();this.worker=undefined;this.enabled=enabled;this.cpuFallbackUsed=preferCpu;this.delegate=undefined;this.faceWarmed=false;this.slowFaceStreak=0;this.pending=undefined;this.busy=false;this.raw=undefined;this.lastSubmitAt=-Infinity;this.lastVideoTime=-1;this.inferenceMs=undefined;
     if(!enabled){this.status='off';this.message='';return;}
     const supported=this.dependencies.supported?.()??(typeof Worker!=='undefined'&&typeof createImageBitmap!=='undefined'&&typeof OffscreenCanvas!=='undefined');
     if(!supported){this.status='unsupported';this.message='此浏览器不支持后台人脸推理，四指尖窗口仍可使用';return;}
@@ -45,7 +46,11 @@ export class FaceTracker {
           if(landmarks.length>=468)this.faceWarmed=true;
           this.inferenceMs=result.inferenceMs;
           if(this.now()-pending.timestamp>FACE_MAX_AGE_MS){
-            if(wasFaceWarmed&&landmarks.length>=468&&++this.slowFaceStreak>=3){this.fail('此设备人脸推理持续过慢，已停止面罩；四指尖窗口仍可使用');return;}
+            if(wasFaceWarmed&&landmarks.length>=468&&++this.slowFaceStreak>=3){
+              if(this.delegate==='GPU'&&!this.cpuFallbackUsed){this.setEnabled(false);this.setEnabled(true,true);if(this.status==='loading')this.message='GPU 人脸推理持续过慢，正在切换 CPU…';}
+              else this.fail('此设备人脸推理持续过慢，已停止面罩；四指尖窗口仍可使用');
+              return;
+            }
             this.status='ready';this.message='人脸推理延迟，过期画面已丢弃';return;
           }
           this.slowFaceStreak=0;
@@ -55,7 +60,7 @@ export class FaceTracker {
       };
       worker.onerror=()=>{if(epoch===this.epoch)this.fail('后台人脸追踪不可用，请重试');};
       this.timeout=setTimeout(()=>{if(epoch===this.epoch)this.fail('人脸模型加载超时，请重试');},FACE_INIT_TIMEOUT_MS);
-      worker.postMessage({type:'init'});
+      worker.postMessage(preferCpu?{type:'init',delegate:'CPU'}:{type:'init'});
     } catch {this.fail('无法启动后台人脸追踪');}
   }
   submit(video:HTMLVideoElement){
