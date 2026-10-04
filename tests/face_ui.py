@@ -50,14 +50,16 @@ with sync_playwright() as p:
                 page.wait_for_function('window.__faceWorkers.length===2')
                 expect(page.locator('.face-status')).to_contain_text('请让单人脸进入四指尖窗口')
                 page.screenshot(path=str(out/f"face-{viewport['width']}.png"))
+                print(f"face-ui {viewport['width']}: retry passed; testing RAW",flush=True)
                 page.locator('.camera-mode-toggle').click()
                 page.wait_for_function('window.__faceWorkers.every(w=>w.terminated)')
                 expect(page.locator('.face-status')).to_contain_text('已暂停面罩追踪')
                 assert page.evaluate('window.__faceWorkers.length')==2,'RAW mode recreated an invisible face Worker'
                 page.locator('.camera-mode-toggle').click()
                 page.wait_for_function('window.__faceWorkers.length===3')
-                page.evaluate('''window.__originalCamera=navigator.mediaDevices.getUserMedia;
-                  navigator.mediaDevices.getUserMedia=()=>new Promise((resolve,reject)=>{window.__rejectCamera=reject;});''')
+                print(f"face-ui {viewport['width']}: RAW resume passed; testing camera switch",flush=True)
+                page.evaluate('''() => { window.__originalCamera=navigator.mediaDevices.getUserMedia;
+                  navigator.mediaDevices.getUserMedia=()=>new Promise((resolve,reject)=>{window.__rejectCamera=reject;}); }''')
                 page.locator('.topbar-actions button[title="切换摄像头"]').click()
                 page.wait_for_function('!!window.__rejectCamera && window.__faceWorkers.every(w=>w.terminated)')
                 expect(page.locator('.face-status')).to_contain_text('等待摄像头就绪')
@@ -68,7 +70,8 @@ with sync_playwright() as p:
                 expect(page.locator('.fatal-card')).to_be_visible()
                 expect(page.locator('.face-status')).to_contain_text('等待摄像头就绪')
                 assert page.evaluate('window.__faceWorkers.length')==3,'Denied camera recreated face Worker'
-                page.evaluate('navigator.mediaDevices.getUserMedia=window.__originalCamera')
+                print(f"face-ui {viewport['width']}: camera pending/denial passed; testing retry",flush=True)
+                page.evaluate('() => { navigator.mediaDevices.getUserMedia=window.__originalCamera; }')
                 page.locator('.fatal-card button').click()
                 page.wait_for_function('window.__faceWorkers.length===4')
                 expect(page.locator('.face-status')).to_contain_text('请让单人脸进入四指尖窗口')
