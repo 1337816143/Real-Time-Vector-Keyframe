@@ -11,7 +11,12 @@ with sync_playwright() as p:
     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
     page.set_content('<html><body></body></html>')
     page.add_script_tag(content=Path('test-results/quad-gpu-fixture.js').read_text())
-    report=page.evaluate('() => window.runQuadGpuTests()')
+    try:
+        report=page.evaluate('() => window.runQuadGpuTests()')
+    except Exception as error:
+        (out/'failure.json').write_text(json.dumps({'error':str(error),'pageErrors':errors},indent=2))
+        page.screenshot(path=str(out/'failure.png'))
+        raise
     assert not errors,errors
     page.screenshot(path=str(out/'quad-gpu.png'))
     (out/'report.json').write_text(json.dumps(report,indent=2))

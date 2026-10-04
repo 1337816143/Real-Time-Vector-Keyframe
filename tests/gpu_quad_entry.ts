@@ -1,3 +1,4 @@
+import { RecordingSession } from '../src/engine/recordingSession';
 import { VfxRenderer } from '../src/engine/renderer';
 import { installEdgeFxRuntime } from '../src/engine/edgeFxRuntime';
 import { PRESETS, type RenderState } from '../src/engine/types';
@@ -54,22 +55,31 @@ exposed.runQuadGpuTests = async () => {
   quadState.alternateIsCamera=false;renderer.render(video,freeze,quadState);const externalInsideLeft=sample(.3,.5),externalInsideRight=sample(.7,.5);
   if(!(externalInsideLeft[0]>150&&externalInsideRight[2]>150))throw new Error('External media orientation changed');
   // Record the same final canvas, then decode the resulting local blob through a video element.
-  quadState.quad!.opacity=1;const recorded=canvas.captureStream(30);
-  const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(m=>MediaRecorder.isTypeSupported(m));
-  const recorder=new MediaRecorder(recorded,mime?{mimeType:mime}:undefined);const chunks:Blob[]=[];
-  recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-  const finished=new Promise<Blob>(resolve=>{recorder.onstop=()=>resolve(new Blob(chunks,{type:recorder.mimeType}));});
-  recorder.start(100);const started=performance.now();
-  await new Promise<void>(resolve=>{const tick=(now:number)=>{quadState.time=now;renderer.render(video,alt,quadState);if(now-started>=1000){recorder.stop();resolve();}else requestAnimationFrame(tick);};requestAnimationFrame(tick);});
-  const blob=await finished;recorded.getTracks().forEach(t=>t.stop());if(!blob.size)throw new Error('Empty canvas recording');
-  const playback=document.createElement('video');playback.muted=true;playback.src=URL.createObjectURL(blob);document.body.append(playback);await playback.play();
-  await new Promise<void>(resolve=>{const tick=()=>playback.currentTime>.15?resolve():requestAnimationFrame(tick);requestAnimationFrame(tick);});
+  quadState.quad!.opacity=1;renderer.render(video,alt,quadState);
+  const recordingSession=new RecordingSession();
+  let recorded:MediaStream|undefined;
+  const captureStream=canvas.captureStream.bind(canvas);
+  canvas.captureStream=(rate?:number)=>{recorded=captureStream(rate);return recorded;};
+  const captureStartPixel=sample(.5,.5);let renderedFrames=0;let captureEndPixel=captureStartPixel;
+  const finished=new Promise<Blob>((resolve,reject)=>{if(!recordingSession.start(canvas,resolve,reject))reject(new Error('Product RecordingSession could not start'));});
+  const started=performance.now();
+  await new Promise<void>(resolve=>{const tick=(now:number)=>{
+    // Real changing synthetic input, outside the quad, avoids static-frame dedup ambiguity.
+    ctx.fillStyle='#222222';ctx.fillRect(0,0,640,24);ctx.fillStyle='#ffffff';ctx.fillRect((renderedFrames*17)%600,4,18,16);
+    quadState.time=now;renderer.render(video,alt,quadState);renderedFrames++;
+    if(now-started>=1200){captureEndPixel=sample(.5,.5);recordingSession.stop();resolve();}else requestAnimationFrame(tick);
+  };requestAnimationFrame(tick);});
+  const streamSettings=recorded?.getVideoTracks()[0]?.getSettings();
+  const blob=await finished;if(!blob.size)throw new Error('Empty canvas recording');
+  const playback=document.createElement('video');playback.muted=true;playback.src=URL.createObjectURL(blob);document.body.append(playback);
+  const presented=new Promise<VideoFrameCallbackMetadata>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('No presented recording frame at mediaTime >= 0.4s within 10s')),10000);playback.addEventListener('ended',()=>{clearTimeout(timer);reject(new Error('Recording ended before a middle frame was presented'));},{once:true});const next=(_now:number,meta:VideoFrameCallbackMetadata)=>{if(meta.mediaTime>=.4){clearTimeout(timer);resolve(meta);}else playback.requestVideoFrameCallback(next);};playback.requestVideoFrameCallback(next);});
+  await playback.play();const decodedFrame=await presented;
   const recording={bytes:blob.size,mime:blob.type,width:playback.videoWidth,height:playback.videoHeight,decodedTime:playback.currentTime};
   const playbackCanvas=document.createElement('canvas');playbackCanvas.width=playback.videoWidth;playbackCanvas.height=playback.videoHeight;const pc=playbackCanvas.getContext('2d')!;pc.drawImage(playback,0,0);const center=Array.from(pc.getImageData(Math.floor(playback.videoWidth*.5),Math.floor(playback.videoHeight*.5),1,1).data);
-  if(!(center[1]>120&&center[0]<60))throw new Error('Recording omitted the composited quad');
+  if(!(center[1]>120&&center[0]<60))throw new Error(`Recording omitted the composited quad: ${JSON.stringify({recording,decodedFrame,center,captureStartPixel,captureEndPixel,renderedFrames,currentTime:video.currentTime,readyState:video.readyState,canvas:{width:canvas.width,height:canvas.height},streamSettings})}`);
   await new Promise<void>(resolve=>{if(playback.ended)resolve();else playback.addEventListener('ended',()=>resolve(),{once:true});});
   const fullyPlayed=playback.ended;playback.pause();URL.revokeObjectURL(playback.src);
   const error=gl.getError();if(error!==gl.NO_ERROR)throw new Error(`WebGL error ${error}`);
   renderer.dispose();(video.srcObject as MediaStream).getTracks().forEach(t=>t.stop());
-  return {method:'Synthetic local MediaStream + actual WebGL2 shader pixels + local recording decode; no model or real camera',reports,edgePixels,fadedEdgePixels,mirrorLeft,mirrorRight,recording,recordedCenter:center,fullyPlayed,fallbackInsideLeft,fallbackInsideRight,freezeInsideLeft,freezeInsideRight,externalInsideLeft,externalInsideRight};
+  return {method:'Synthetic moving local MediaStream + actual WebGL2 shader pixels + product RecordingSession/default codec + local decode; no model or real camera',reports,edgePixels,fadedEdgePixels,mirrorLeft,mirrorRight,recording,decodedFrame,captureStartPixel,captureEndPixel,renderedFrames,recordedCenter:center,fullyPlayed,fallbackInsideLeft,fallbackInsideRight,freezeInsideLeft,freezeInsideRight,externalInsideLeft,externalInsideRight};
 };
