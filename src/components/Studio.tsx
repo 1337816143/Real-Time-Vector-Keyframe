@@ -801,11 +801,23 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       <canvas ref={canvasRef} className="vfx-canvas" />
       <canvas ref={debugCanvasRef} className="tracking-canvas" />
 
+      <div className="interaction-status">
       <div className="interaction-mode glass-panel" aria-label="交互模式">
         <button className={maskType === 'crossHandQuad' ? 'selected' : ''} onClick={() => selectMaskType('crossHandQuad')}>双手四指尖窗口</button>
         <button className={maskType !== 'crossHandQuad' ? 'selected' : ''} onClick={() => selectMaskType('portal')}>高级蒙版 / 原有功能</button>
         {maskType === 'crossHandQuad' && !quadPreview && <small>{({waiting:'请伸出双手，张开食指与拇指',tracking:'四指尖已连接 · 特效仅在窗口内',holding:'短暂丢手 · 正在等待',lost:'追踪已过期 · 请把双手放回画面',invalid:'四边形交叉或过小 · 请重新展开'})[quadStatus]}</small>}
         {quadPreview && <button onClick={() => { quadScrubRef.current = undefined; setQuadPreview(false); }}>关键帧预览中 · 恢复实时跟手</button>}
+      </div>
+      {trackingError && (
+        <div className="tracking-error glass-panel" role="status">
+          <strong>{trackingError}</strong>
+          <button onClick={() => setTrackingRetry((value) => value + 1)}>重试手部追踪</button>
+        </div>
+      )}
+      {maskType !== 'crossHandQuad' && !trackingError && status !== 'error' && tutorialStep < 4 && (
+        <div className="tutorial glass-panel"><span>0{tutorialStep + 1}</span><strong>{tutorialText}</strong><small>{trackingReady ? 'Hand tracking active' : 'Loading hand model…'}</small></div>
+      )}
+
       </div>
       <header className="studio-topbar glass-panel">
         <button className="brand-button" onClick={onExit} aria-label="Exit studio">
@@ -830,17 +842,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
         </section>
       )}
 
-      {trackingError && (
-        <div className="tutorial glass-panel" role="status">
-          <strong>{trackingError}</strong>
-          <button onClick={() => setTrackingRetry((value) => value + 1)}>重试手部追踪</button>
-        </div>
-      )}
       {recordingError && <div className="recording-warning glass-panel" role="alert">{recordingError}</div>}
-      {maskType !== 'crossHandQuad' && !trackingError && status !== 'error' && tutorialStep < 4 && (
-        <div className="tutorial glass-panel"><span>0{tutorialStep + 1}</span><strong>{tutorialText}</strong><small>{trackingReady ? 'Hand tracking active' : 'Loading hand model…'}</small></div>
-      )}
-
       <aside className={`studio-panel glass-panel ${panelOpen ? 'open' : ''}`}>
         <div className="panel-heading">
           <div><span className="eyebrow">LIVE CONTROL</span><h2>{panel === 'mask' ? 'Mask' : panel === 'effects' ? 'Effects' : panel === 'gesture' ? 'Gesture + Motion' : panel === 'record' ? 'Record' : 'Settings'}</h2></div>

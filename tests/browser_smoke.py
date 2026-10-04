@@ -163,6 +163,14 @@ def main() -> None:
                           return window.__uiTest.gpuDraws > 2 && p &&
                             p.left[2] > p.left[0] + 60 && p.right[0] > p.right[2] + 60;
                         }""", timeout=10000)
+                        expect(page.locator('.tracking-error')).to_contain_text('手部模型加载失败')
+                        error_box = page.locator('.tracking-error').bounding_box()
+                        mode_box = page.locator('.interaction-mode').bounding_box()
+                        assert error_box and mode_box
+                        assert error_box['x'] >= 0 and error_box['x'] + error_box['width'] <= viewport['width']
+                        assert error_box['y'] >= 0 and error_box['y'] + error_box['height'] <= viewport['height']
+                        assert error_box['y'] >= mode_box['y'] + mode_box['height'] + 7, 'Tracking error overlaps mode controls'
+                        expect(page.locator('.tracking-error button')).to_be_visible()
                         page.screenshot(path=str(out / f'{scenario}-gpu.png'))
                         page.locator('.camera-mode-toggle').click()
                         expect(page.locator('.camera-mode-toggle')).to_contain_text('原始摄像头')

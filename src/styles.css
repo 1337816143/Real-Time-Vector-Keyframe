@@ -184,3 +184,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .interaction-mode button.selected {color:#e7fbff;border-color:#7ab9c8;background:#173641;}
 .interaction-mode small {flex-basis:100%;text-align:center;color:#b5ced4;font-size:11px;}
 @media(max-width:720px){.interaction-mode{top:70px;width:calc(100% - 24px);}.interaction-mode button{padding:7px;font-size:11px;}}
+
+.tracking-error {position:absolute;z-index:31;top:148px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;width:min(440px,calc(100% - 32px));padding:12px 14px;color:#e3edf0;}
+.tracking-error strong {flex:1;min-width:0;font-size:12px;font-weight:500;line-height:1.55;}
+.tracking-error button {flex:none;max-width:40%;padding:8px 10px;background:#16333d;color:#e7fbff;border:1px solid #6b9ca9;border-radius:8px;font-size:12px;line-height:1.4;cursor:pointer;}
+
+/* Keep mode controls and multiline tracking errors in one measured flow. */
+.interaction-status {position:absolute;z-index:31;top:78px;left:50%;transform:translateX(-50%);width:min(440px,calc(100% - 32px));display:flex;flex-direction:column;gap:8px;}
+.interaction-status .interaction-mode,.interaction-status .tracking-error,.interaction-status .tutorial {position:static;transform:none;width:100%;max-width:none;}
+@media(max-width:720px){.interaction-status{top:70px;width:calc(100% - 24px);}}
