@@ -186,6 +186,7 @@ function sanitizeEffects(value: unknown): EffectSettings {
   }
 
   return {
+    faceFx: item.faceFx==='spider'?'spider':'none',
     rgbSplit: clamp(finite(item.rgbSplit, 0), 0, 0.2),
     ripple: clamp(finite(item.ripple, 0), 0, 0.2),
     pixelate: clamp(finite(item.pixelate, 0), 0, 240),
@@ -371,6 +372,7 @@ function sanitizeEffectSequence(
     const clips = rawClips.slice(0, 32).flatMap((raw, index) => {
       try {
         const clip = object(raw);
+        if(clip.presetId==='spider')return []; // Face paint is a live quad-only preset.
         const maskId = typeof clip.maskId === 'string' ? clip.maskId : '';
         if (!maskId || (nodeIds.size > 0 && !nodeIds.has(maskId))) return [];
         const startMs = clamp(finite(clip.startMs, 0), 0, Number.isFinite(duration) ? Math.max(0, duration - 1) : Number.MAX_SAFE_INTEGER);

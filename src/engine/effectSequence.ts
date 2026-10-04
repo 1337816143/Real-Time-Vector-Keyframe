@@ -1,5 +1,6 @@
 import { cloneMaskNode, type SceneMaskNode } from './scene';
 import { sceneMotionRecorder } from './sceneMotion';
+import { CYCLE_PRESETS } from './presetSelection';
 import { PRESETS, type EffectSettings, type PresetId } from './types';
 
 export interface EffectSequenceClip {
@@ -52,7 +53,7 @@ export function getEffectSequenceTrack(): EffectSequenceTrack {
 
 export function replaceEffectSequence(next?: EffectSequenceTrack) {
   track = next
-    ? { version: 1, clips: next.clips.slice(0, 32).map(cloneClip) }
+    ? { version: 1, clips: next.clips.slice(0, 32).filter(clip=>CYCLE_PRESETS.includes(clip.presetId)).map(cloneClip) }
     : { version: 1, clips: [] };
   emit();
 }
@@ -92,6 +93,7 @@ export function addEffectSequenceClip(maskId: string, durationMs: number, atMs =
 }
 
 export function updateEffectSequenceClip(id: string, patch: Partial<Omit<EffectSequenceClip, 'id'>>) {
+  if(patch.presetId&&!CYCLE_PRESETS.includes(patch.presetId))return;
   const source = track.clips.find((clip) => clip.id === id);
   if (!source) return;
   const startMs = Math.max(0, patch.startMs ?? source.startMs);

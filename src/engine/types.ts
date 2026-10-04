@@ -1,3 +1,4 @@
+import type { SpiderFaceFrame } from './faceGeometry';
 import type { CrossHandQuadFrame } from './crossHandQuad';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 
@@ -19,7 +20,7 @@ export type EffectTransitionType = 'crossFade' | 'directionalWipe' | 'glitch' | 
 export type EffectNodeType = 'rgbSplit' | 'ripple' | 'pixelate' | 'distortion';
 export type EffectBlendMode = 'normal' | 'add' | 'screen' | 'multiply';
 export type EdgeFxMode = 'none' | 'neon' | 'scanner' | 'electric' | 'particle';
-export type PresetId = 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 'slash';
+export type PresetId = 'spider' | 'multiverse' | 'cyber' | 'dream' | 'time' | 'freeze' | 'slash';
 
 export interface Vec2 {
   x: number;
@@ -79,6 +80,7 @@ export interface EffectNode {
 }
 
 export interface EffectSettings {
+  faceFx?: 'none' | 'spider';
   rgbSplit: number;
   ripple: number;
   pixelate: number;
@@ -108,6 +110,7 @@ export interface EngineDebug {
 }
 
 export interface RenderState {
+  face?: SpiderFaceFrame;
   alternateIsCamera?: boolean;
   quad?: CrossHandQuadFrame;
   maskType: MaskType;
@@ -243,6 +246,11 @@ export const PRESETS: Record<PresetId, { label: string; mask: MaskType; effects:
       temporalMix: 1,
       effectStack: stack(['ripple', 'distortion', 'rgbSplit', 'pixelate'], ['ripple']),
     }),
+  },
+  spider: {
+    label: '蜘蛛英雄面罩',
+    mask: 'crossHandQuad',
+    effects: fx({faceFx:'spider',glow:.8,edgeFxMode:'electric',useAlternateMedia:false,effectStack:stack(['rgbSplit','ripple','distortion','pixelate'],[])}),
   },
   freeze: {
     label: 'Freeze World',

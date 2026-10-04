@@ -193,3 +193,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .interaction-status {position:absolute;z-index:31;top:78px;left:50%;transform:translateX(-50%);width:min(440px,calc(100% - 32px));display:flex;flex-direction:column;gap:8px;}
 .interaction-status .interaction-mode,.interaction-status .tracking-error,.interaction-status .tutorial {position:static;transform:none;width:100%;max-width:none;}
 @media(max-width:720px){.interaction-status{top:70px;width:calc(100% - 24px);}}
+
+.face-status {display:flex;flex-wrap:wrap;gap:5px 10px;padding:11px 14px;color:#e4e9ed;font-size:11px;line-height:1.5;}
+.face-status strong,.face-status small{flex-basis:100%;}.face-status small{color:#a6b5be;}.face-status button{background:#173641;color:#e7fbff;border:1px solid #6b9ca9;border-radius:7px;padding:5px 9px;cursor:pointer;}

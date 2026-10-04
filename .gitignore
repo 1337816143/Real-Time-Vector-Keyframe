@@ -11,3 +11,5 @@ vite.config.d.ts
 
 test-results/
 .browser-venv/
+
+__pycache__/

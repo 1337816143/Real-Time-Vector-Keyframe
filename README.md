@@ -15,7 +15,24 @@ Camera
   → MediaRecorder
 ```
 
-## Current baseline — v0.9
+## Current feature baseline — v0.11
+
+The default control is the exact four-fingertip polygon LI → RI → RT → LT, with the original advanced mask/scene tools preserved. The explicit **蜘蛛英雄面罩** preset adds an original procedural red mask, white lenses and web lines. This is a 2D/2.5D face-aligned effect, not a photorealistic or generative face replacement.
+
+- Face paint is GPU-composited only within the face oval ∩ valid four-fingertip window and is recorded from the same final canvas.
+- Face Landmarker loads on demand in a separate Worker; at most one frame is in flight, sampling the newest available frame at up to 12 Hz. Stale results expire after 250 ms. These are policy limits, not measured end-to-end latency claims.
+- Startup warms up the detector on blank local frames (up to four measured samples after the cold call, requiring two consecutive samples within the unchanged 200 ms budget) before accepting camera frames. The first positive-face landmark inference has a bounded 15-second cold-start deadline, while every result older than 250 ms is still discarded; later frames use the 3-second watchdog. Persistently stale CPU tracking stops the effect with a clear notice. Explicit software renderers use CPU directly. Three stale warmed GPU positives trigger one bounded CPU restart with the previous face cleared; a backend whose warmed-up inference exceeds the freshness budget fails clearly instead of painting stale faces. Inputs are capped at 320 pixels wide.
+- Changing effect/mode or leaving the studio terminates the face Worker. The original carousel and gesture cycling do not automatically opt into face tracking.
+- The face preset and quad motion settings can be saved in project JSON. Face landmarks and camera media are not stored in that JSON.
+- Camera frames and landmarks stay in this browser. Initial use downloads official MediaPipe WASM/model files; the SDK may emit performance/usage statistics ([SDK notice](https://github.com/google-ai-edge/mediapipe#privacy-notice)). This is not a zero-network claim.
+
+### Verification boundary
+
+CI exercises deterministic lifecycle/geometry/persistence tests, the real WebGL shader with synthetic landmarks, final-canvas VP9 recording/decode, production UI scenarios, and the actual product FaceTracker and official Face Landmarker Worker with blank synthetic frames plus a hash-pinned official public portrait test fixture. These do not establish real-person tracking accuracy, mobile camera behavior, thermal stability, or hardware end-to-end latency. Production publication remains gated on the exact commit’s CI and tested artifact.
+
+Release CI and Pages validation run the full unchanged suite on the standard Ubuntu 24.04 ARM64 cloud runner. A separately labelled x64 shared-runner capability probe retains the same assertions and its failures. Some x64/SwiftShader runs could not sustain the 250 ms face freshness bound; this is not a blanket claim about x64 computers, Windows, or phones. Slow browser backends stop the face effect clearly while the four-fingertip window remains available. Build identity includes the validation runner, commit, and run ID. No native Node build dependencies are shipped: the site contains only HTML, CSS, JSON and browser JavaScript, with the pinned platform-neutral MediaPipe WebAssembly/model downloaded on demand.
+
+## Preserved advanced baseline
 
 The current `main` contains a real realtime/rendering chain rather than placeholder controls:
 
@@ -558,7 +575,7 @@ not a complete feature ledger for this newer baseline.
 **Validation boundary:** deterministic synthetic landmark/resource tests and
 Chromium synthetic-video shader tests do not establish real camera accuracy,
 MediaPipe throughput, phone compatibility, thermal performance or end-to-end
-latency. Spider-Man face replacement, Fire/Ice and worker inference remain
+latency. This section predates the v0.11 face Worker and procedural mask described above. Fire/Ice and hand-worker inference remain
 unimplemented. No camera frames are uploaded; microphone access is not requested.
 
 `npm test` runs the deterministic regressions. CI uses the lockfile and Node 24,
