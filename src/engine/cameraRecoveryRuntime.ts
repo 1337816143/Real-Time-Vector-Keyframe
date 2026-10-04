@@ -30,6 +30,9 @@ const probeContext = probeCanvas.getContext('2d', { willReadFrequently: true });
 let installed = false;
 let forceRaw = new URLSearchParams(window.location.search).get('raw') === '1';
 
+/** Read the same mode that decides whether the final GPU canvas is displayed. */
+export function isRawCameraMode() { return forceRaw; }
+
 function rendererCanvas(renderer: VfxRenderer) {
   return (renderer as unknown as { canvas: HTMLCanvasElement }).canvas;
 }

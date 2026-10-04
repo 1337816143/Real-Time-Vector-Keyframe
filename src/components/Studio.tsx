@@ -27,6 +27,8 @@ import { CameraSession } from '../engine/cameraSession';
 import { RecordingSession } from '../engine/recordingSession';
 import { GestureController } from '../engine/gesture';
 import { FaceTracker, type FaceStatus } from '../engine/faceTracking';
+import { getFaceActivity, type FaceActivity } from '../engine/facePolicy';
+import { isRawCameraMode } from '../engine/cameraRecoveryRuntime';
 import { nextCyclePreset } from '../engine/presetSelection';
 import { HandTracker } from '../engine/handTracking';
 import { getSceneState } from '../engine/sceneStore';
@@ -177,6 +179,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const altImageRef = useRef<HTMLImageElement>(null);
   const freezeCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   const cameraSessionRef = useRef(new CameraSession());
+  const cameraReadyRef = useRef(false);
   const recordingSessionRef = useRef(new RecordingSession());
   const trackerRef = useRef<HandTracker>();
   const faceTrackerRef = useRef(new FaceTracker());
@@ -213,7 +216,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const [recordingUrl, setRecordingUrl] = useState<string>();
   const [panel, setPanel] = useState<'mask' | 'effects' | 'gesture' | 'record' | 'settings'>('effects');
   const [panelOpen, setPanelOpen] = useState(true);
-  const [faceUi, setFaceUi] = useState<{status:FaceStatus;message:string;inferenceMs?:number;delegate?:string}>({status:'off',message:''});
+  const [faceUi, setFaceUi] = useState<{status:FaceStatus|FaceActivity;message:string;inferenceMs?:number;delegate?:string}>({status:'off',message:''});
   const [quadPreview, setQuadPreview] = useState(false);
   const [quadStatus, setQuadStatus] = useState<QuadStatus>('waiting');
   const [trackingReady, setTrackingReady] = useState(false);
@@ -236,6 +239,14 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const [transitionType, setTransitionType] = useState<EffectTransitionType>('crossFade');
   const [transitionDuration, setTransitionDuration] = useState(650);
   const [projectMessage, setProjectMessage] = useState('');
+
+  const cameraUsableForFace = () => {
+    const video = videoRef.current;
+    return cameraReadyRef.current && Boolean(video && video.readyState >= 2
+      && video.videoWidth > 0 && video.videoHeight > 0
+      && video.srcObject instanceof MediaStream
+      && video.srcObject.getVideoTracks().some(track => track.readyState === 'live'));
+  };
 
   const captureFreeze = useCallback(() => {
     const video = videoRef.current;
@@ -282,6 +293,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       setRecordingError('切换摄像头前已停止录制，片段会保留在录制预览中');
     }
     await cameraSessionRef.current.start(video, mode, (nextStatus, message) => {
+      cameraReadyRef.current = nextStatus === 'ready';
       if (nextStatus === 'loading') {
         faceTrackerRef.current.dispose();
         quadRef.current.reset();
@@ -499,9 +511,11 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       renderState = { ...renderState, alternateIsCamera: !alternate || alternate === video || alternate === freezeCanvasRef.current };
       const faceTracker=faceTrackerRef.current;
       const wantsFace=renderState.maskType==='crossHandQuad'&&renderState.effects.faceFx==='spider';
-      faceTracker.setEnabled(wantsFace);
-      if(wantsFace&&renderState.quad&&renderState.quad.opacity>0&&document.visibilityState!=='hidden')faceTracker.submit(video);
-      renderState={...renderState,face:wantsFace?faceTracker.sample(performance.now(),rect.width,rect.height,mirrorRef.current):undefined};
+      const faceActivity=getFaceActivity(wantsFace,cameraUsableForFace(),isRawCameraMode());
+      const faceActive=faceActivity==='active';
+      faceTracker.setEnabled(faceActive);
+      if(faceActive&&renderState.quad&&renderState.quad.opacity>0&&document.visibilityState!=='hidden')faceTracker.submit(video);
+      renderState={...renderState,face:faceActive?faceTracker.sample(performance.now(),rect.width,rect.height,mirrorRef.current):undefined};
       renderer?.render(video, alternate, renderState);
       if (recordingSessionRef.current.isRecording() && canvas.dataset.vfxLive !== 'true') {
         recordingSessionRef.current.stop();
@@ -529,7 +543,11 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       if (now - lastDebugUi > 180) {
         const hand = snapshotRef.current?.hands[0];
         setQuadStatus(renderState.quad?.status ?? 'waiting');
-        setFaceUi({status:faceTracker.status,message:faceTracker.message,inferenceMs:faceTracker.inferenceMs,delegate:faceTracker.delegate});
+        setFaceUi(faceActivity==='waiting-camera'
+          ? {status:faceActivity,message:'等待摄像头就绪，面罩追踪尚未启动'}
+          : faceActivity==='raw-camera'
+            ? {status:faceActivity,message:'当前显示原始摄像头，已暂停面罩追踪；切回特效自动可恢复'}
+            : {status:faceTracker.status,message:faceTracker.message,inferenceMs:faceTracker.inferenceMs,delegate:faceTracker.delegate});
         setDebug({
           fps,
           trackingFps: snapshotRef.current?.trackingFps ?? 0,
@@ -834,7 +852,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
         <div className="face-status glass-panel" role="status">
           <strong>蜘蛛英雄面罩 · 单人脸</strong><span>{faceUi.message}</span>
           {faceUi.inferenceMs!=null && <small>后台推理 {faceUi.inferenceMs.toFixed(0)} ms · {faceUi.delegate??'本地'}（非端到端延迟）</small>}
-          {faceUi.status==='error'&&<button onClick={()=>faceTrackerRef.current.reset()}>重试人脸追踪</button>}
+          {faceUi.status==='error'&&<button onClick={()=>{if(cameraUsableForFace()&&!isRawCameraMode())faceTrackerRef.current.reset();}}>重试人脸追踪</button>}
         </div>
       )}
       </div>

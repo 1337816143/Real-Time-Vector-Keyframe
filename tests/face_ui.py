@@ -50,16 +50,38 @@ with sync_playwright() as p:
                 page.wait_for_function('window.__faceWorkers.length===2')
                 expect(page.locator('.face-status')).to_contain_text('请让单人脸进入四指尖窗口')
                 page.screenshot(path=str(out/f"face-{viewport['width']}.png"))
+                page.locator('.camera-mode-toggle').click()
+                page.wait_for_function('window.__faceWorkers.every(w=>w.terminated)')
+                expect(page.locator('.face-status')).to_contain_text('已暂停面罩追踪')
+                assert page.evaluate('window.__faceWorkers.length')==2,'RAW mode recreated an invisible face Worker'
+                page.locator('.camera-mode-toggle').click()
+                page.wait_for_function('window.__faceWorkers.length===3')
+                page.evaluate('''window.__originalCamera=navigator.mediaDevices.getUserMedia;
+                  navigator.mediaDevices.getUserMedia=()=>new Promise((resolve,reject)=>{window.__rejectCamera=reject;});''')
+                page.locator('.topbar-actions button[title="切换摄像头"]').click()
+                page.wait_for_function('!!window.__rejectCamera && window.__faceWorkers.every(w=>w.terminated)')
+                expect(page.locator('.face-status')).to_contain_text('等待摄像头就绪')
+                start_frame=page.evaluate('window.__uiTest.animationFrames')
+                page.wait_for_function('(start)=>window.__uiTest.animationFrames>start+15',arg=start_frame)
+                assert page.evaluate('window.__faceWorkers.length')==3,'Pending camera recreated face Worker'
+                page.evaluate("window.__rejectCamera(new DOMException('Synthetic switch denial','NotAllowedError'))")
+                expect(page.locator('.fatal-card')).to_be_visible()
+                expect(page.locator('.face-status')).to_contain_text('等待摄像头就绪')
+                assert page.evaluate('window.__faceWorkers.length')==3,'Denied camera recreated face Worker'
+                page.evaluate('navigator.mediaDevices.getUserMedia=window.__originalCamera')
+                page.locator('.fatal-card button').click()
+                page.wait_for_function('window.__faceWorkers.length===4')
+                expect(page.locator('.face-status')).to_contain_text('请让单人脸进入四指尖窗口')
                 page.get_by_role('button',name='高级蒙版 / 原有功能',exact=True).click()
                 page.wait_for_function('window.__faceWorkers.every(w=>w.terminated)')
                 expect(page.locator('.face-status')).to_have_count(0)
                 page.locator('.preset-button').filter(has_text='蜘蛛英雄面罩').click()
-                page.wait_for_function('window.__faceWorkers.length===3')
+                page.wait_for_function('window.__faceWorkers.length===5')
                 page.locator('.brand-button').click();expect(page.locator('.enter-button')).to_be_visible()
                 assert page.evaluate('window.__faceWorkers.every(w=>w.terminated)')
                 assert page.evaluate('window.__uiTest.streams.every(s=>s.getTracks().every(t=>t.readyState==="ended"))')
                 assert not errors,errors
-                reports.append({'viewport':viewport,'pass':True,'workersCreated':3,'allWorkersTerminated':True,'advancedCarouselPreserved':True,'pageErrors':errors})
+                reports.append({'viewport':viewport,'pass':True,'workersCreated':5,'allWorkersTerminated':True,'advancedCarouselPreserved':True,'rawModeSuspendsFace':True,'pendingOrDeniedCameraDoesNotRecreateWorker':True,'cameraRetryResumesFace':True,'pageErrors':errors})
             except Exception as error:
                 (out/'failure.json').write_text(json.dumps({'error':str(error),'viewport':viewport,'pageErrors':errors},indent=2));page.screenshot(path=str(out/'failure.png'));raise
             finally:page.close()
