@@ -52,8 +52,9 @@ function meaningfulChange(a: MotionKeyframe, b: MotionKeyframe) {
     Math.abs(a.effects.temporalMix - b.effects.temporalMix) * 0.02;
   const quadChanged = JSON.stringify(a.quad?.points) !== JSON.stringify(b.quad?.points) || a.quad?.opacity !== b.quad?.opacity;
   const stackChanged = JSON.stringify(a.effects.effectStack) !== JSON.stringify(b.effects.effectStack);
+  const faceChanged = a.effects.faceFx !== b.effects.faceFx;
   const edgeChanged = (a.effects.edgeFxMode ?? 'neon') !== (b.effects.edgeFxMode ?? 'neon');
-  return quadChanged || a.maskType !== b.maskType || position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || edgeChanged || a.gestureState !== b.gestureState;
+  return faceChanged || quadChanged || a.maskType !== b.maskType || position > 0.004 || interaction > 0.006 || scale > 0.004 || rotation > 0.018 || effectDelta > 0.001 || stackChanged || edgeChanged || a.gestureState !== b.gestureState;
 }
 
 export class MotionRecorder {
@@ -236,6 +237,7 @@ export class MotionRecorder {
         rotation: angleLerp(a.transform.rotation, b.transform.rotation, mix),
       },
       effects: {
+        faceFx: mix<.5?a.effects.faceFx:b.effects.faceFx,
         rgbSplit: lerp(a.effects.rgbSplit, b.effects.rgbSplit, mix),
         ripple: lerp(a.effects.ripple, b.effects.ripple, mix),
         pixelate: lerp(a.effects.pixelate, b.effects.pixelate, mix),

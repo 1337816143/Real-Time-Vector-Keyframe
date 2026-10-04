@@ -15,9 +15,10 @@ import {
 import { sceneMotionRecorder } from '../engine/sceneMotion';
 import { getSceneState, replaceScene, subscribeScene } from '../engine/sceneStore';
 import { PRESETS, type PresetId } from '../engine/types';
+import { CYCLE_PRESETS } from '../engine/presetSelection';
 import './EffectSequenceEditor.css';
 
-const PRESET_IDS = Object.keys(PRESETS) as PresetId[];
+const PRESET_IDS = CYCLE_PRESETS;
 
 export default function EffectSequenceEditor() {
   const sceneState = useSyncExternalStore(subscribeScene, getSceneState, getSceneState);

@@ -26,6 +26,8 @@ import { CrossHandQuadController, cloneQuad, type QuadStatus } from '../engine/c
 import { CameraSession } from '../engine/cameraSession';
 import { RecordingSession } from '../engine/recordingSession';
 import { GestureController } from '../engine/gesture';
+import { FaceTracker, type FaceStatus } from '../engine/faceTracking';
+import { nextCyclePreset } from '../engine/presetSelection';
 import { HandTracker } from '../engine/handTracking';
 import { getSceneState } from '../engine/sceneStore';
 import { sceneMotionRecorder } from '../engine/sceneMotion';
@@ -48,7 +50,7 @@ import {
   type TrailReleaseMode,
 } from '../engine/types';
 
-const PRESET_ORDER: PresetId[] = ['multiverse', 'cyber', 'dream', 'time', 'freeze', 'slash'];
+const PRESET_ORDER: PresetId[] = ['multiverse', 'spider', 'cyber', 'dream', 'time', 'freeze', 'slash'];
 const TEMPORAL_MODES: TemporalMode[] = ['none', 'timeWindow', 'echo', 'afterImage'];
 const TRAIL_MODES: TrailReleaseMode[] = ['hold', 'dissipate', 'close', 'expand', 'burst', 'shrink'];
 const TRANSITIONS: EffectTransitionType[] = ['crossFade', 'directionalWipe', 'glitch', 'flash', 'liquid'];
@@ -177,6 +179,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const cameraSessionRef = useRef(new CameraSession());
   const recordingSessionRef = useRef(new RecordingSession());
   const trackerRef = useRef<HandTracker>();
+  const faceTrackerRef = useRef(new FaceTracker());
   const rendererRef = useRef<VfxRenderer>();
   const gestureRef = useRef(new GestureController(DEFAULT_TRANSFORM));
   const quadRef = useRef(new CrossHandQuadController());
@@ -210,6 +213,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const [recordingUrl, setRecordingUrl] = useState<string>();
   const [panel, setPanel] = useState<'mask' | 'effects' | 'gesture' | 'record' | 'settings'>('effects');
   const [panelOpen, setPanelOpen] = useState(true);
+  const [faceUi, setFaceUi] = useState<{status:FaceStatus;message:string;inferenceMs?:number;delegate?:string}>({status:'off',message:''});
   const [quadPreview, setQuadPreview] = useState(false);
   const [quadStatus, setQuadStatus] = useState<QuadStatus>('waiting');
   const [trackingReady, setTrackingReady] = useState(false);
@@ -244,6 +248,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   }, []);
 
   const applyPreset = useCallback((id: PresetId, direction: -1 | 1 = 1, animate = true) => {
+    if(id==='spider'&&(sceneMotionRecorder.isRecording()||sceneMotionRecorder.isPlaying())){setRecordingError('请先停止场景运动录制或播放，再启用人脸面罩');return;}
     const next = PRESETS[id];
     const nextEffects = cloneEffects(next.effects);
     if (animate && id !== presetRef.current) {
@@ -254,7 +259,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       );
     }
     presetRef.current = id;
-    const nextMask = maskTypeRef.current === 'crossHandQuad' ? 'crossHandQuad' : next.mask;
+    const nextMask = id==='spider'||maskTypeRef.current === 'crossHandQuad' ? 'crossHandQuad' : next.mask;
     maskTypeRef.current = nextMask;
     effectsRef.current = nextEffects;
     setPreset(id);
@@ -266,9 +271,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   }, [captureFreeze]);
 
   const cyclePreset = useCallback((direction: -1 | 1) => {
-    const current = PRESET_ORDER.indexOf(presetRef.current);
-    const nextIndex = (current + direction + PRESET_ORDER.length) % PRESET_ORDER.length;
-    applyPreset(PRESET_ORDER[nextIndex], direction, true);
+    applyPreset(nextCyclePreset(presetRef.current, direction), direction, true);
   }, [applyPreset]);
 
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
@@ -280,6 +283,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
     }
     await cameraSessionRef.current.start(video, mode, (nextStatus, message) => {
       if (nextStatus === 'loading') {
+        faceTrackerRef.current.dispose();
         quadRef.current.reset();
         quadScrubRef.current = undefined;
         setQuadPreview(false);
@@ -493,6 +497,11 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       let alternate: TexImageSource | undefined = altSourceRef.current;
       if (presetRef.current === 'freeze') alternate = frozenRef.current ? freezeCanvasRef.current : video;
       renderState = { ...renderState, alternateIsCamera: !alternate || alternate === video || alternate === freezeCanvasRef.current };
+      const faceTracker=faceTrackerRef.current;
+      const wantsFace=renderState.maskType==='crossHandQuad'&&renderState.effects.faceFx==='spider';
+      faceTracker.setEnabled(wantsFace);
+      if(wantsFace&&renderState.quad&&renderState.quad.opacity>0&&document.visibilityState!=='hidden')faceTracker.submit(video);
+      renderState={...renderState,face:wantsFace?faceTracker.sample(performance.now(),rect.width,rect.height,mirrorRef.current):undefined};
       renderer?.render(video, alternate, renderState);
       if (recordingSessionRef.current.isRecording() && canvas.dataset.vfxLive !== 'true') {
         recordingSessionRef.current.stop();
@@ -520,6 +529,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       if (now - lastDebugUi > 180) {
         const hand = snapshotRef.current?.hands[0];
         setQuadStatus(renderState.quad?.status ?? 'waiting');
+        setFaceUi({status:faceTracker.status,message:faceTracker.message,inferenceMs:faceTracker.inferenceMs,delegate:faceTracker.delegate});
         setDebug({
           fps,
           trackingFps: snapshotRef.current?.trackingFps ?? 0,
@@ -547,6 +557,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
     animationRef.current = requestAnimationFrame(frame);
     return () => {
       disposed = true;
+      faceTrackerRef.current.dispose();
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       tracker.close();
       rendererRef.current?.dispose();
@@ -556,6 +567,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   }, [captureFreeze, cyclePreset, trackingRetry]);
 
   useEffect(() => () => {
+    faceTrackerRef.current.dispose();
     cameraSessionRef.current.dispose();
     recordingSessionRef.current.dispose();
     if (sceneMotionRecorder.isRecording()) sceneMotionRecorder.stop(getSceneState().scene);
@@ -818,6 +830,13 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
         <div className="tutorial glass-panel"><span>0{tutorialStep + 1}</span><strong>{tutorialText}</strong><small>{trackingReady ? 'Hand tracking active' : 'Loading hand model…'}</small></div>
       )}
 
+      {faceUi.status!=='off' && (
+        <div className="face-status glass-panel" role="status">
+          <strong>蜘蛛英雄面罩 · 单人脸</strong><span>{faceUi.message}</span>
+          {faceUi.inferenceMs!=null && <small>后台推理 {faceUi.inferenceMs.toFixed(0)} ms · {faceUi.delegate??'本地'}（非端到端延迟）</small>}
+          {faceUi.status==='error'&&<button onClick={()=>faceTrackerRef.current.reset()}>重试人脸追踪</button>}
+        </div>
+      )}
       </div>
       <header className="studio-topbar glass-panel">
         <button className="brand-button" onClick={onExit} aria-label="Exit studio">
@@ -859,6 +878,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
               ))}
             </div>
 
+            {preset==='spider' && <p className="panel-note">原创程序化2D/2.5D红色面罩、白色眼罩和蛛网，仅在脸部与四指尖窗口交集内显示。首次启用下载人脸模型，图像在浏览器本地处理，不上传人脸或摄像头帧。MediaPipe可能发送性能/使用统计。<a href="https://github.com/google-ai-edge/mediapipe#privacy-notice" target="_blank" rel="noreferrer"> SDK隐私说明</a></p>}
             <span className="eyebrow">EFFECT MODE · CAROUSEL</span>
             <Toggle label="Auto carousel" checked={carouselEnabled} onChange={setCarouselEnabled} />
             {carouselEnabled && <Range label="Carousel interval (ms)" value={carouselInterval} min={1500} max={10000} step={250} onChange={setCarouselInterval} />}

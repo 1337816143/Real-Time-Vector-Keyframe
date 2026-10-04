@@ -31,3 +31,23 @@ test('quad persistence: narrow live-valid 16:9 geometry stays visible in interpo
   const project=createProjectSnapshot({preset:'cyber',mask:{type:'crossHandQuad',transform:state(narrow).transform,trailReleaseMode:'hold'},effects:PRESETS.cyber.effects,carousel:{enabled:false,intervalMs:3000,transitionType:'crossFade',transitionDurationMs:650},motion:r.getTrack()});
   assert.deepEqual(parseProject(stringifyProject(project)).motion.keyframes[0].quad.points,narrow);
 });
+
+test('face project: Spider preset and motion settings roundtrip without face geometry or media',()=>{
+  const r=new MotionRecorder();r.start(1000);
+  const spiderState={...state(points),effects:PRESETS.spider.effects,face:{outline:[{x:.2,y:.2}],timestamp:1000}};
+  r.capture(spiderState,1000);r.capture({...spiderState,time:1100},1100);r.stop(1100);
+  assert.equal(r.sampleAtTime(50).effects.faceFx,'spider');
+  const project=createProjectSnapshot({preset:'spider',mask:{type:'crossHandQuad',transform:state(points).transform,trailReleaseMode:'hold'},effects:PRESETS.spider.effects,carousel:{enabled:false,intervalMs:3000,transitionType:'crossFade',transitionDurationMs:650},motion:r.getTrack()});
+  const json=stringifyProject(project);const parsed=parseProject(json);
+  assert.equal(parsed.preset,'spider');assert.equal(parsed.effects.faceFx,'spider');assert.equal(parsed.motion.keyframes[0].effects.faceFx,'spider');
+  assert.ok(parsed.motion.keyframes.every(f=>!('face' in f)));assert.ok(!json.includes('outline'));
+});
+
+test('face sequence: live quad-only Spider cannot become a nonfunctional Scene clip',async()=>{
+  const seq=await bundle('src/engine/effectSequence.ts');
+  const clip=seq.addEffectSequenceClip('mask-1',2000);seq.updateEffectSequenceClip(clip.id,{presetId:'spider'});
+  assert.equal(seq.getEffectSequenceTrack().clips[0].presetId,'cyber');
+  seq.replaceEffectSequence({version:1,clips:[{...clip,presetId:'spider'}]});assert.equal(seq.getEffectSequenceTrack().clips.length,0);
+  const project=createProjectSnapshot({preset:'spider',mask:{type:'crossHandQuad',transform:state(points).transform,trailReleaseMode:'hold'},effects:PRESETS.spider.effects,carousel:{enabled:false,intervalMs:3000,transitionType:'crossFade',transitionDurationMs:650},effectSequence:{version:1,clips:[{...clip,presetId:'spider'}]}});
+  assert.equal(parseProject(stringifyProject(project)).effectSequence.clips.length,0);
+});

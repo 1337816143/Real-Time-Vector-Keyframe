@@ -1,3 +1,4 @@
+import { SPIDER_UNIFORMS, SPIDER_SHADER } from './spiderShader';
 import { QUAD_UNIFORMS, QUAD_SDF } from './quadShader';
 import { sampleClosedCurve } from './bezier';
 import type { SceneMaskNode } from './scene';
@@ -168,6 +169,7 @@ uniform float uMaskScale;
 uniform float uMaskRotation;
 uniform int uMaskType;
 ${QUAD_UNIFORMS}
+${SPIDER_UNIFORMS}
 uniform float uHandSpeed;
 uniform float uGlow;
 uniform float uInvertMask;
@@ -217,6 +219,7 @@ float segmentDistance(vec2 p, vec2 a, vec2 b) {
 }
 
 ${QUAD_SDF}
+${SPIDER_SHADER}
 
 float capsuleSdf(vec2 p, vec2 a, vec2 b, float r) {
   return segmentDistance(p, a, b) - r;
@@ -346,6 +349,13 @@ void main() {
   if (uInvertMask > 0.5 && uMaskType != 5) maskAlpha = 1.0 - maskAlpha;
   if (uMaskType == 5) maskAlpha *= uQuadOpacity;
   vec3 color = mix(base, effect, maskAlpha);
+  if(uSpiderEnabled>.5 && uMaskType==5 && uFaceOpacity>0.0){
+    // Feather INWARD: face paint is exactly zero beyond either polygon.
+    float faceFeather=1.5/max(1.0,uViewport.y);
+    float faceAlpha=(1.0-smoothstep(-faceFeather,0.0,faceSdf(vUv)))*uFaceOpacity;
+    float quadInside=(1.0-smoothstep(-faceFeather,0.0,sd))*uQuadOpacity;
+    color=mix(color,spiderPaint(vUv),faceAlpha*quadInside);
+  }
 
   float edge = exp(-abs(sd) * (125.0 / max(0.12, uMaskScale))) * uGlow;
   float hot = clamp(edge * (0.42 + min(uHandSpeed, 2.0) * 0.32), 0.0, 1.0);
@@ -763,6 +773,18 @@ export class VfxRenderer {
     gl.uniform1i(this.uniform(program, 'uMaskType'), maskType);
     gl.uniform2fv(this.uniform(program, 'uQuad[0]'), new Float32Array((state.quad?.points ?? Array.from({length:4}, () => ({x:0,y:0}))).flatMap((p) => [p.x, 1-p.y])));
     gl.uniform1f(this.uniform(program, 'uQuadOpacity'), state.quad?.points ? state.quad.opacity : 0);
+    const face=state.face;
+    const spider=state.effects.faceFx==='spider'&&state.maskType==='crossHandQuad'&&face?.outline.length===36;
+    gl.uniform1f(this.uniform(program,'uSpiderEnabled'),spider?1:0);
+    gl.uniform1f(this.uniform(program,'uFaceOpacity'),spider?face!.opacity:0);
+    if(spider&&face){
+      gl.uniform2fv(this.uniform(program,'uFaceOutline[0]'),new Float32Array(face.outline.flatMap(p=>[p.x,p.y])));
+      gl.uniform2f(this.uniform(program,'uFaceCenter'),face.center.x,face.center.y);
+      gl.uniform2f(this.uniform(program,'uFaceAxisX'),face.axisX.x,face.axisX.y);
+      gl.uniform2f(this.uniform(program,'uFaceAxisY'),face.axisY.x,face.axisY.y);
+      gl.uniform2f(this.uniform(program,'uFaceHalfSize'),face.halfSize.x,face.halfSize.y);
+      gl.uniform2fv(this.uniform(program,'uFaceEyes[0]'),new Float32Array(face.eyes.flatMap(p=>[p.x,p.y])));
+    }
     gl.uniform1f(this.uniform(program, 'uHandSpeed'), state.handSpeed);
     gl.uniform1f(this.uniform(program, 'uGlow'), state.effects.glow);
     gl.uniform1f(this.uniform(program, 'uInvertMask'), state.effects.invertMask ? 1 : 0);
