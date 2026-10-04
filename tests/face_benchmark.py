@@ -49,7 +49,7 @@ with sync_playwright() as p:
             valid=(row['landmarkCount']>=468 and row['geometryValid']) if phase in ['portrait','reacquisition'] else row['landmarkCount']==0 and not row['geometryValid']
             streak=streak+1 if valid and row['ageMs']<250 else 0;longest=max(longest,streak)
           tail=rows[-10:]
-          value.setdefault('phaseSummaries',{})[phase]={'tailCount':len(tail),'tailMeanAgeMs':sum(r['ageMs'] for r in tail)/len(tail) if tail else None,'tailMaxAgeMs':max((r['ageMs'] for r in tail),default=None),'samples':len(rows),'inferenceUnder200':sum(r['inferenceMs']<=200 for r in rows),'roundtripUnder250':sum(r['ageMs']<250 for r in rows),'longestFreshValidStreak':longest,'staleSamples':sum(r['ageMs']>=250 for r in rows)}
+          value.setdefault('phaseSummaries',{})[phase]={'tailMeanWebglCpuMs':sum(r.get('webglCpuMs',0) for r in tail)/len(tail) if tail else None,'tailCount':len(tail),'tailMeanAgeMs':sum(r['ageMs'] for r in tail)/len(tail) if tail else None,'tailMaxAgeMs':max((r['ageMs'] for r in tail),default=None),'samples':len(rows),'inferenceUnder200':sum(r['inferenceMs']<=200 for r in rows),'roundtripUnder250':sum(r['ageMs']<250 for r in rows),'longestFreshValidStreak':longest,'staleSamples':sum(r['ageMs']>=250 for r in rows)}
         report['runs'].append(value);print(json.dumps(value),flush=True)
       except Exception as e:report['runs'].append({'runLabel':run_label,'delegate':delegate,'inputKind':input_kind,'error':str(e)})
       report.update({'requests':requests,'unexpectedNetwork':blocked,'fixture':{'url':portrait_url,'sha256':hashlib.sha256(portrait).hexdigest(),'persisted':False}})

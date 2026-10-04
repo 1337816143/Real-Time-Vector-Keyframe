@@ -1,0 +1,14 @@
+name: ARM64 validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    with:
+      arm_runner: true

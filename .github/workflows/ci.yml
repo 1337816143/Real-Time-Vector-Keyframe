@@ -5,13 +5,17 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      arm_runner:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arm_runner && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
