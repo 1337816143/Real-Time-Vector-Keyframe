@@ -15,13 +15,14 @@ Camera
   → MediaRecorder
 ```
 
-## Current feature baseline — v0.11
+## Current feature baseline — v0.11.1
 
 The default control is the exact four-fingertip polygon LI → RI → RT → LT, with the original advanced mask/scene tools preserved. The explicit **蜘蛛英雄面罩** preset adds an original procedural red mask, white lenses and web lines. This is a 2D/2.5D face-aligned effect, not a photorealistic or generative face replacement.
 
 - Face paint is GPU-composited only within the face oval ∩ valid four-fingertip window and is recorded from the same final canvas.
 - Face Landmarker loads on demand in a separate Worker; at most one frame is in flight, sampling the newest available frame at up to 12 Hz. Stale results expire after 250 ms. These are policy limits, not measured end-to-end latency claims.
 - Startup warms up the detector on blank local frames (up to four measured samples after the cold call, requiring two consecutive samples within the unchanged 200 ms budget) before accepting camera frames. The first positive-face landmark inference has a bounded 15-second cold-start deadline, while every result older than 250 ms is still discarded; later frames use the 3-second watchdog. Persistently stale CPU tracking stops the effect with a clear notice. Explicit software renderers use CPU directly. Three stale warmed GPU positives trigger one bounded CPU restart with the previous face cleared; a backend whose warmed-up inference exceeds the freshness budget fails clearly instead of painting stale faces. Inputs are capped at 320 pixels wide.
+- The face Worker starts only after the camera is usable in VFX auto mode. Switching cameras, a pending/denied camera, and explicit RAW camera mode stop it and show the reason; returning to a usable camera/VFX mode resumes the selected effect.
 - Changing effect/mode or leaving the studio terminates the face Worker. The original carousel and gesture cycling do not automatically opt into face tracking.
 - The face preset and quad motion settings can be saved in project JSON. Face landmarks and camera media are not stored in that JSON.
 - Camera frames and landmarks stay in this browser. Initial use downloads official MediaPipe WASM/model files; the SDK may emit performance/usage statistics ([SDK notice](https://github.com/google-ai-edge/mediapipe#privacy-notice)). This is not a zero-network claim.
