@@ -11,8 +11,8 @@ scope.onmessage=async ({data:m})=>{
       task=await FaceLandmarker.createFromOptions(files,{canvas:new OffscreenCanvas(1,1),runningMode:'VIDEO',numFaces:1,minFaceDetectionConfidence:.6,minFacePresenceConfidence:.6,minTrackingConfidence:.6,outputFaceBlendshapes:false,outputFacialTransformationMatrixes:false,baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',delegate:m.delegate}});
       scope.postMessage({type:'ready'});
     } else if(m.type==='frame'){
-      try{const start=performance.now();const result=task!.detectForVideo(m.bitmap,m.timestamp);const inferenceMs=performance.now()-start;const geometryValid=Boolean(faceFromLandmarks(result.faceLandmarks[0]??[],m.timestamp,{videoWidth:m.bitmap.width,videoHeight:m.bitmap.height,viewWidth:m.bitmap.width,viewHeight:m.bitmap.height,mirror:false}));scope.postMessage({type:'result',id:m.id,inferenceMs,landmarkCount:result.faceLandmarks[0]?.length??0,geometryValid});}
-      finally{m.bitmap.close();}
+      try{const input=m.bitmap??m.imageData;const start=performance.now();const result=task!.detectForVideo(input,m.timestamp);const inferenceMs=performance.now()-start;const geometryValid=Boolean(faceFromLandmarks(result.faceLandmarks[0]??[],m.timestamp,{videoWidth:input.width,videoHeight:input.height,viewWidth:input.width,viewHeight:input.height,mirror:false}));scope.postMessage({type:'result',id:m.id,inferenceMs,landmarkCount:result.faceLandmarks[0]?.length??0,geometryValid});}
+      finally{m.bitmap?.close();}
     } else if(m.type==='close'){task?.close();task=undefined;}
   } catch(error){scope.postMessage({type:'error',message:error instanceof Error?error.message:String(error)});}
 };
