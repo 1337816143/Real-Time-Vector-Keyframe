@@ -25,9 +25,10 @@ with sync_playwright() as p:
     context.route('**/*',route_request);page=context.new_page();page.goto(base+'/')
     page.wait_for_timeout(300)
     assert not any('face_landmarker.task' in r['url'] for r in requests),'Face model loaded before opt-in'
+    reports=[];pipeline=None;positive=None;phase='raw-default'
     try:
-        reports=[]
         for force_fallback in [False,True]:
+          phase='raw-forced-fallback' if force_fallback else 'raw-default'
           report=page.evaluate('''async ({workerPath,forceFallback}) => {
           let workerUrl=workerPath;
           if(forceFallback){
@@ -44,11 +45,13 @@ with sync_playwright() as p:
           worker.postMessage({type:'close'});worker.terminate();if(forceFallback)URL.revokeObjectURL(workerUrl);
           return {delegate:init.delegate,gpuFailure:init.gpuFailure,warmupMs:init.warmupMs,warmupSamples:init.warmupSamples,initMs,inferenceMs:result.inferenceMs,landmarkCount:result.landmarks.length,frameId:result.id,bitmapTransferred:bitmap.width===0};
         }''',{'workerPath':base+'/assets/'+workers[0].name,'forceFallback':force_fallback})
+          report['forcedGpuFactoryFailure']=force_fallback;reports.append(report)
+          (out/'progress.json').write_text(json.dumps({'phase':phase,'observedRuns':reports},indent=2))
           assert report['initMs']<30000,report
           assert report['landmarkCount']==0 and report['frameId']==1 and report['bitmapTransferred'],report
           assert report['inferenceMs']<250,report
           if force_fallback:assert report['delegate']=='CPU' and report['gpuFailure']=='Synthetic GPU factory failure',report
-          report['forcedGpuFactoryFailure']=force_fallback;reports.append(report)
+        phase='product-blank'
         page.add_script_tag(content=Path('test-results/face-pipeline-fixture.js').read_text())
         pipeline=page.evaluate('(options)=>window.runFacePipeline(options)',{'workerPath':base+'/assets/'+workers[0].name})
         assert pipeline['status']=='no-face' and pipeline['consecutiveFresh']>=3,pipeline
@@ -58,12 +61,13 @@ with sync_playwright() as p:
         portrait=urllib.request.urlopen(portrait_url,timeout=30).read()
         portrait_sha=hashlib.sha256(portrait).hexdigest()
         assert portrait_sha=='a6f11efaa834706db23f275b6115058fa87fc7f14362681e6abe14e82749de3e'
+        phase='product-positive'
         positive=page.evaluate('(options)=>window.runFacePipeline(options)',{'workerPath':base+'/assets/'+workers[0].name,'sourceDataUrl':'data:image/jpeg;base64,'+base64.b64encode(portrait).decode()})
         assert positive['status']=='tracking' and positive['consecutiveFresh']>=3,positive
         assert not blocked,blocked
         report={'positivePipeline':positive,'fixture':{'url':portrait_url,'sha256':portrait_sha,'persisted':False},'productPipeline':pipeline,'method':'Official Face Landmarker and actual tracker: blank frames plus pinned public portrait replay; user camera and real-device accuracy untested','runs':reports,'requests':requests,'unexpectedNetwork':blocked}
         (out/'report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
     except Exception as error:
-        (out/'failure.json').write_text(json.dumps({'error':str(error),'requests':requests,'blocked':blocked},indent=2));raise
+        (out/'failure.json').write_text(json.dumps({'error':str(error),'phase':phase,'observedRuns':reports,'productPipeline':pipeline,'positivePipeline':positive,'requests':requests,'blocked':blocked},indent=2));raise
     finally:
         browser.close();server.shutdown()

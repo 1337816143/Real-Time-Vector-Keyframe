@@ -39,7 +39,12 @@ jobs:
       - name: Face preset opt-in, retry, advanced mode and exit (synthetic Worker)
         run: timeout 120s .browser-venv/bin/python tests/face_ui.py
       - name: Actual FaceTracker with blank frames and pinned official portrait fixture
+        id: face_worker
         run: timeout 120s .browser-venv/bin/python tests/face_worker.py
+      - name: Diagnose raw SDK timing after a failed face gate (never a release pass)
+        if: failure() && steps.face_worker.outcome == 'failure'
+        continue-on-error: true
+        run: timeout 180s .browser-venv/bin/python tests/face_benchmark.py
       - name: Record exact tested build identity
         run: |
           printf '{"commit":"%s","run_id":"%s","validation":"synthetic WebGL + official Face Worker fixture; user camera/hardware unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.json
