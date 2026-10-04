@@ -1,4 +1,4 @@
-name: ARM64 validation
+name: x64 capability probe (non-release)
 
 on:
   pull_request:
@@ -11,4 +11,4 @@ jobs:
   verify:
     uses: ./.github/workflows/ci.yml
     with:
-      arm_runner: true
+      x64_probe: true

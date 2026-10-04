@@ -15,7 +15,7 @@ Camera
   → MediaRecorder
 ```
 
-## Current feature baseline — v0.11 candidate
+## Current feature baseline — v0.11
 
 The default control is the exact four-fingertip polygon LI → RI → RT → LT, with the original advanced mask/scene tools preserved. The explicit **蜘蛛英雄面罩** preset adds an original procedural red mask, white lenses and web lines. This is a 2D/2.5D face-aligned effect, not a photorealistic or generative face replacement.
 
@@ -29,6 +29,8 @@ The default control is the exact four-fingertip polygon LI → RI → RT → LT,
 ### Verification boundary
 
 CI exercises deterministic lifecycle/geometry/persistence tests, the real WebGL shader with synthetic landmarks, final-canvas VP9 recording/decode, production UI scenarios, and the actual product FaceTracker and official Face Landmarker Worker with blank synthetic frames plus a hash-pinned official public portrait test fixture. These do not establish real-person tracking accuracy, mobile camera behavior, thermal stability, or hardware end-to-end latency. Production publication remains gated on the exact commit’s CI and tested artifact.
+
+Release CI and Pages validation run the full unchanged suite on the standard Ubuntu 24.04 ARM64 cloud runner. A separately labelled x64 shared-runner capability probe retains the same assertions and its failures. Some x64/SwiftShader runs could not sustain the 250 ms face freshness bound; this is not a blanket claim about x64 computers, Windows, or phones. Slow browser backends stop the face effect clearly while the four-fingertip window remains available. Build identity includes the validation runner, commit, and run ID. No native Node build dependencies are shipped: the site contains only HTML, CSS, JSON and browser JavaScript, with the pinned platform-neutral MediaPipe WebAssembly/model downloaded on demand.
 
 ## Preserved advanced baseline
 

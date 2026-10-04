@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_call:
     inputs:
-      arm_runner:
+      x64_probe:
         type: boolean
         default: false
 
@@ -15,7 +15,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ${{ inputs.arm_runner && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    # Release validation uses the verified standard ARM64 profile. The x64 probe retains the same assertions.
+    runs-on: ${{ inputs.x64_probe && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +52,7 @@ jobs:
         run: timeout 180s .browser-venv/bin/python tests/face_benchmark.py
       - name: Record exact tested build identity
         run: |
-          printf '{"commit":"%s","run_id":"%s","validation":"synthetic WebGL + official Face Worker fixture; user camera/hardware unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > dist/build-info.json
+          printf '{"commit":"%s","run_id":"%s","runner":"%s/%s","validation":"synthetic WebGL + official Face Worker fixture; user camera/hardware unverified"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$RUNNER_OS" "$RUNNER_ARCH" > dist/build-info.json
           (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) > test-results/tested-dist.sha256
       - name: Save only tested deployable artifact
         uses: actions/upload-artifact@v4
