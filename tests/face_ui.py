@@ -18,7 +18,10 @@ with sync_playwright() as p:
             page=browser.new_page(viewport=viewport);errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
             page.route('https://**/*',lambda route:route.abort())
             page.add_init_script('('+INSTRUMENT+')()');page.add_init_script('('+MEDIA+')(false)')
-            page.add_init_script('''window.__faceWorkers=[];window.Worker=class {
+            page.add_init_script('''window.__visibilityListenerAdds=0;
+              const addDocumentListener=document.addEventListener.bind(document);
+              document.addEventListener=(type,listener,...options)=>{if(type==='visibilitychange')window.__visibilityListenerAdds++;return addDocumentListener(type,listener,...options);};
+              window.__faceWorkers=[];window.Worker=class {
               constructor(url,options){this.url=String(url);this.options=options;this.terminated=false;window.__faceWorkers.push(this);}
               postMessage(m){if(m.type==='init')queueMicrotask(()=>this.onmessage?.({data:{type:'ready',delegate:'SYNTHETIC'}}));}
               terminate(){this.terminated=true;}
@@ -83,8 +86,18 @@ with sync_playwright() as p:
                 page.locator('.brand-button').click();expect(page.locator('.enter-button')).to_be_visible()
                 assert page.evaluate('window.__faceWorkers.every(w=>w.terminated)')
                 assert page.evaluate('window.__uiTest.streams.every(s=>s.getTracks().every(t=>t.readyState==="ended"))')
+                assert page.evaluate('window.__visibilityListenerAdds')==1,'Studio retained per-video document listeners'
+                page.locator('.enter-button').click();expect(page.locator('.studio-shell')).to_be_visible()
+                page.wait_for_function("document.querySelector('.studio-shell > video')?.currentTime > .1")
+                page.locator('.preset-button').filter(has_text='蜘蛛英雄面罩').click()
+                page.wait_for_function('window.__faceWorkers.length===6')
+                page.locator('.brand-button').click();expect(page.locator('.enter-button')).to_be_visible()
+                page.evaluate("() => { document.dispatchEvent(new Event('visibilitychange')); }")
+                assert page.evaluate('window.__visibilityListenerAdds')==1,'Re-entry duplicated the visibility listener'
+                assert page.evaluate('window.__faceWorkers.every(w=>w.terminated)')
+                assert page.evaluate('window.__uiTest.streams.every(s=>s.getTracks().every(t=>t.readyState==="ended"))')
                 assert not errors,errors
-                reports.append({'viewport':viewport,'pass':True,'workersCreated':5,'allWorkersTerminated':True,'advancedCarouselPreserved':True,'rawModeSuspendsFace':True,'pendingOrDeniedCameraDoesNotRecreateWorker':True,'cameraRetryResumesFace':True,'pageErrors':errors})
+                reports.append({'viewport':viewport,'pass':True,'workersCreated':6,'allWorkersTerminated':True,'advancedCarouselPreserved':True,'rawModeSuspendsFace':True,'pendingOrDeniedCameraDoesNotRecreateWorker':True,'cameraRetryResumesFace':True,'repeatedStudioEntryCleanup':True,'documentVisibilityListenerRegistrations':1,'pageErrors':errors})
             except Exception as error:
                 (out/'failure.json').write_text(json.dumps({'error':str(error),'viewport':viewport,'pageErrors':errors},indent=2));page.screenshot(path=str(out/'failure.png'));raise
             finally:page.close()

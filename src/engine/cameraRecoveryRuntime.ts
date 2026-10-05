@@ -20,6 +20,8 @@ type VideoHealth = {
 };
 
 const rendererState = new WeakMap<VfxRenderer, RecoveryState>();
+// Entries exist only while a renderer is alive; dispose releases both renderer and video.
+const ownedCameraVideos = new Map<VfxRenderer, HTMLVideoElement>();
 const videoHealth = new WeakMap<HTMLVideoElement, VideoHealth>();
 const preparedVideos = new WeakSet<HTMLVideoElement>();
 const noteMessages = new WeakMap<HTMLButtonElement, string>();
@@ -33,12 +35,14 @@ let forceRaw = new URLSearchParams(window.location.search).get('raw') === '1';
 /** Read the same mode that decides whether the final GPU canvas is displayed. */
 export function isRawCameraMode() { return forceRaw; }
 
-function rendererCanvas(renderer: VfxRenderer) {
-  return (renderer as unknown as { canvas: HTMLCanvasElement }).canvas;
+function isOwnedCamera(video: HTMLVideoElement) {
+  if (!video.isConnected) return false;
+  for (const owned of ownedCameraVideos.values()) if (owned === video) return true;
+  return false;
 }
 
-function primaryCameraVideo() {
-  return document.querySelector<HTMLVideoElement>('.studio-shell > video.source-media:first-of-type');
+function rendererCanvas(renderer: VfxRenderer) {
+  return (renderer as unknown as { canvas: HTMLCanvasElement }).canvas;
 }
 
 function recoveryNote() {
@@ -73,13 +77,26 @@ function setNoteContent(note: HTMLButtonElement, title: string, message: string)
 }
 
 function showResumeNote(video: HTMLVideoElement) {
+  if (!isOwnedCamera(video) || !video.srcObject || !video.paused) return;
   const note = recoveryNote();
   if (!note) return;
   note.dataset.kind = 'camera-paused';
   setNoteContent(note, 'Camera is ready but paused', 'Tap to resume the live preview');
   note.onclick = () => {
-    void video.play().then(() => clearRecoveryNote('camera-paused')).catch(() => undefined);
+    if (!isOwnedCamera(video) || !video.srcObject) return;
+    const source = video.srcObject;
+    void video.play().then(() => {
+      if (isOwnedCamera(video) && video.srcObject === source) clearRecoveryNote('camera-paused');
+    }).catch(() => undefined);
   };
+}
+
+function resumeCamera(video: HTMLVideoElement) {
+  if (!isOwnedCamera(video) || !video.srcObject || video.readyState < HTMLMediaElement.HAVE_METADATA || !video.paused) return;
+  const source = video.srcObject;
+  void video.play().catch(() => {
+    if (video.srcObject === source) showResumeNote(video);
+  });
 }
 
 function showWaitingNote(message = 'Waiting for the first real camera frame…') {
@@ -215,23 +232,17 @@ function prepareCamera(video: HTMLVideoElement, mirror: boolean) {
   video.muted = true;
   video.playsInline = true;
 
-  const resume = () => {
-    if (!video.srcObject || video.readyState < HTMLMediaElement.HAVE_METADATA || !video.paused) return;
-    void video.play().catch(() => showResumeNote(video));
-  };
+  const resume = () => resumeCamera(video);
 
   video.addEventListener('loadedmetadata', resume);
   video.addEventListener('canplay', resume);
   video.addEventListener('playing', () => {
+    if (!isOwnedCamera(video)) return;
     video.dataset.cameraLive = 'true';
     clearRecoveryNote('camera-paused');
   });
   video.addEventListener('pause', () => {
-    if (video.srcObject && document.visibilityState === 'visible') showResumeNote(video);
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') resume();
+    if (isOwnedCamera(video) && video.srcObject && document.visibilityState === 'visible') showResumeNote(video);
   });
 
   resume();
@@ -269,7 +280,8 @@ function attemptConservativeCameraProfile(video: HTMLVideoElement, now: number) 
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 },
-  }).then(() => video.play()).catch((error) => {
+  }).then(() => isOwnedCamera(video) && currentVideoTrack(video) === track ? video.play() : undefined).catch((error) => {
+    if (!isOwnedCamera(video) || currentVideoTrack(video) !== track) return;
     console.warn('[camera-recovery] conservative camera constraints failed', error);
     showWaitingNote('Camera is active but frames are not arriving. Try switching camera or reloading the Studio.');
   });
@@ -329,14 +341,27 @@ export function installCameraRecoveryRuntime() {
   if (installed) return;
   installed = true;
 
+  // One runtime listener, never a closure retaining each departed Studio video.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    // Do not target another embedded video through a global DOM query.
+    for (const video of new Set(ownedCameraVideos.values())) resumeCamera(video);
+  });
+
   const previousRender = VfxRenderer.prototype.render;
   const previousSetMirror = VfxRenderer.prototype.setMirror;
+  const previousDispose = VfxRenderer.prototype.dispose;
+
+  VfxRenderer.prototype.dispose = function disposeWithCameraRelease() {
+    ownedCameraVideos.delete(this);
+    return previousDispose.call(this);
+  };
 
   VfxRenderer.prototype.setMirror = function setMirrorWithCameraFallback(value: boolean) {
     const state = rendererState.get(this) ?? { goodProbes: 0, blackProbes: 0, mirror: value, lastProbeAt: 0 };
     state.mirror = value;
     rendererState.set(this, state);
-    syncMirror(primaryCameraVideo(), value);
+    syncMirror(ownedCameraVideos.get(this), value);
     return previousSetMirror.call(this, value);
   };
 
@@ -348,6 +373,7 @@ export function installCameraRecoveryRuntime() {
     const canvas = rendererCanvas(this);
     const recovery = rendererState.get(this) ?? { goodProbes: 0, blackProbes: 0, mirror: true, lastProbeAt: 0 };
     rendererState.set(this, recovery);
+    ownedCameraVideos.set(this, camera);
     prepareCamera(camera, recovery.mirror);
 
     const now = performance.now();
