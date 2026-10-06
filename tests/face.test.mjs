@@ -107,3 +107,43 @@ test('face pipeline: stale GPU positives restart once on CPU with no old face re
   cpu.emit({type:'ready',delegate:'CPU'});for(let i=4;i<8;i++)await frame(cpu,i,i===4?30:300);
   assert.equal(h.tracker.status,'error');assert.equal(h.workers.length,2);assert.equal(cpu.terminated,true);
 });
+
+for(const delay of [250,400])test(`face pipeline: a bitmap delayed ${delay}ms is closed without doomed inference; only a newer frame retries`,async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const copies=[];const h=harness(t,{makeBitmap:()=>new Promise(resolve=>copies.push(resolve))});
+  h.tracker.setEnabled(true);const w=h.workers[0];w.emit({type:'ready',delegate:'CPU'});
+  h.tracker.submit(h.video);assert.equal(copies.length,1);
+  const stale={closes:0,close(){this.closes++;}};h.now(1000+delay);copies[0](stale);await settle();
+  assert.equal(stale.closes,1);assert.equal(w.messages.filter(m=>m.type==='frame').length,0);
+  assert.equal(h.tracker.status,'ready');assert.match(h.tracker.message,/跳过过期/);
+  assert.equal(h.tracker.sample(1000+delay,640,360),undefined);
+  t.mock.timers.tick(15001);assert.equal(h.tracker.status,'ready','expired copy watchdog must be cleared');
+  h.tracker.submit(h.video);assert.equal(copies.length,1,'same camera frame must not be recaptured');
+  h.now(1000+delay+1);h.video.currentTime=2;h.tracker.submit(h.video);assert.equal(copies.length,2);
+  const fresh={closes:0,close(){this.closes++;}};copies[1](fresh);await settle();
+  const messages=w.messages.filter(m=>m.type==='frame');assert.equal(messages.length,1);
+  const frame=messages[0];assert.equal(frame.timestamp,1000+delay+1,'fresh capture keeps its own timestamp');
+  assert.equal(frame.bitmap,fresh);assert.equal(fresh.closes,0,'transferred bitmap belongs to Worker');
+  h.now(frame.timestamp+20);w.emit({type:'result',id:frame.id,timestamp:frame.timestamp,landmarks:landmarks(),inferenceMs:20});
+  assert.ok(h.tracker.sample(frame.timestamp+20,640,360));assert.equal(h.tracker.status,'tracking');
+});
+
+test('face pipeline: a bitmap just within 250ms keeps the original capture deadline',async t=>{
+  let resolve;const h=harness(t,{makeBitmap:()=>new Promise(r=>resolve=r)});
+  h.tracker.setEnabled(true);const w=h.workers[0];w.emit({type:'ready',delegate:'CPU'});h.tracker.submit(h.video);
+  const image={closes:0,close(){this.closes++;}};h.now(1249);resolve(image);await settle();
+  const frame=w.messages.at(-1);assert.equal(frame.type,'frame');assert.equal(frame.timestamp,1000);assert.equal(image.closes,0);
+  h.now(1251);w.emit({type:'result',id:frame.id,timestamp:frame.timestamp,landmarks:landmarks(),inferenceMs:2});
+  assert.equal(h.tracker.sample(1251,640,360),undefined,'post-copy inference must not reset freshness');
+});
+
+test('face pipeline: late bitmap after its watchdog cannot revive tracking or clear a new timer',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});const copies=[];
+  const h=harness(t,{makeBitmap:()=>new Promise(resolve=>copies.push(resolve))});h.tracker.setEnabled(true);
+  h.workers[0].emit({type:'ready',delegate:'CPU'});h.tracker.submit(h.video);t.mock.timers.tick(15001);
+  assert.equal(h.tracker.status,'error');h.tracker.reset();assert.equal(h.tracker.status,'loading');
+  const stale={closes:0,close(){this.closes++;}};h.now(17000);copies[0](stale);await settle();
+  assert.equal(stale.closes,1);assert.equal(h.tracker.status,'loading');
+  assert.equal(h.workers[0].messages.filter(m=>m.type==='frame').length,0);
+  t.mock.timers.tick(30001);assert.equal(h.tracker.status,'error');assert.match(h.tracker.message,/加载超时/);
+});
