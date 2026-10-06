@@ -3,12 +3,62 @@ name: x64 capability probe (non-release)
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      same_runner_diagnostic:
+        description: Compare the pinned baseline and candidate once on one runner (not release acceptance)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   verify:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.same_runner_diagnostic }}
     uses: ./.github/workflows/ci.yml
     with:
       x64_probe: true
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.same_runner_diagnostic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Read diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          path: paired/controller
+          persist-credentials: false
+      - name: Read exact published baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 80c4cac13716caf177d8737a66919a477b1e83e8
+          path: paired/baseline
+          persist-credentials: false
+      - name: Read exact runtime candidate
+        uses: actions/checkout@v4
+        with:
+          ref: b07328628967735c0e7538ef61c2102d4cd85280
+          path: paired/candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install one shared original browser toolchain
+        run: |
+          mkdir -p paired-evidence
+          python3 -m venv "$RUNNER_TEMP/vector-paired-venv"
+          "$RUNNER_TEMP/vector-paired-venv/bin/pip" install --disable-pip-version-check playwright==1.57.0
+          "$RUNNER_TEMP/vector-paired-venv/bin/python" -m playwright install --with-deps chromium
+      - name: Run unchanged formal face tests once per revision on this runner
+        run: |
+          "$RUNNER_TEMP/vector-paired-venv/bin/python" paired/controller/scripts/face_x64_pair_diagnostic.py \
+            --baseline paired/baseline \
+            --candidate paired/candidate \
+            --output paired-evidence
+      - name: Save diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x64-paired-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: paired-evidence/
+          retention-days: 14
