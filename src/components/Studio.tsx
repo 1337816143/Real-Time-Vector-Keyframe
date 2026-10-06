@@ -192,6 +192,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const snapshotRef = useRef<TrackingSnapshot>();
   const animationRef = useRef<number>();
   const objectUrlsRef = useRef<string[]>([]);
+  const altMediaRef = useRef<{ url: string; video?: HTMLVideoElement; image?: HTMLImageElement }>();
   const presetRef = useRef<PresetId>('multiverse');
   const debugVisibleRef = useRef(false);
   const tutorialStepRef = useRef(0);
@@ -284,6 +285,24 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
   const cyclePreset = useCallback((direction: -1 | 1) => {
     applyPreset(nextCyclePreset(presetRef.current, direction), direction, true);
   }, [applyPreset]);
+
+  const clearAltMedia = useCallback(() => {
+    const media = altMediaRef.current;
+    // Invalidate ownership before releasing resources or a queued load callback.
+    altMediaRef.current = undefined;
+    if (!media) return;
+    if (media.image) {
+      media.image.onload = null;
+      media.image.removeAttribute('src');
+    }
+    if (media.video) {
+      media.video.pause();
+      media.video.removeAttribute('src');
+      media.video.load();
+    }
+    if (altSourceRef.current === media.image || altSourceRef.current === media.video) altSourceRef.current = undefined;
+    URL.revokeObjectURL(media.url);
+  }, []);
 
   const startCamera = useCallback(async (mode: 'user' | 'environment') => {
     const video = videoRef.current;
@@ -590,26 +609,27 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
     recordingSessionRef.current.dispose();
     if (sceneMotionRecorder.isRecording()) sceneMotionRecorder.stop(getSceneState().scene);
     sceneMotionRecorder.stopPlayback();
+    clearAltMedia();
     objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-  }, []);
+  }, [clearAltMedia]);
 
   const handleAltMedia = (file?: File) => {
     if (!file) return;
+    const video = file.type.startsWith('video/') ? altVideoRef.current : undefined;
+    const image = file.type.startsWith('image/') ? altImageRef.current : undefined;
+    if (!video && !image) return;
+    clearAltMedia();
     const url = URL.createObjectURL(file);
-    objectUrlsRef.current.push(url);
+    altMediaRef.current = { url, video: video ?? undefined, image: image ?? undefined };
     setAltMediaName(file.name);
-    if (file.type.startsWith('video/')) {
-      const video = altVideoRef.current;
-      if (!video) return;
+    if (video) {
       video.src = url;
       video.loop = true;
       video.muted = true;
-      void video.play();
+      void video.play().catch(() => undefined);
       altSourceRef.current = video;
-    } else if (file.type.startsWith('image/')) {
-      const image = altImageRef.current;
-      if (!image) return;
-      image.onload = () => { altSourceRef.current = image; };
+    } else if (image) {
+      image.onload = () => { if (altMediaRef.current?.url === url) altSourceRef.current = image; };
       image.src = url;
     }
     setEffects((current) => ({ ...current, useAlternateMedia: true }));
@@ -775,6 +795,7 @@ export default function Studio({ onExit, onModeChange }: { onExit: () => void; o
       quadScrubRef.current = undefined;
       setQuadPreview(false);
       quadRef.current.reset();
+      clearAltMedia();
       altSourceRef.current = undefined;
       frozenRef.current = false;
       setAltMediaName(needsExternalMedia ? 'Re-select alternate media' : 'No alternate media');

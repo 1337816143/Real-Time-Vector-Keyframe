@@ -19,19 +19,21 @@ export class HandTracker {
   private labelVotes = new Map<number, number>();
   private lastDetectAt = 0;
   private lastVideoTime = -1;
-  private resetVelocity = false;
+  private coordinateEpoch = 0;
+  private handCoordinateEpoch = new Map<number, number>();
   private recentDetectTimes: number[] = [];
   private mirrored = true;
   private displaySize: [number, number] = [1, 1];
   private videoSize: [number, number] = [1, 1];
 
   setMirrored(value: boolean) {
+    if (this.mirrored !== value) this.coordinateEpoch += 1;
     this.mirrored = value;
   }
 
   setDisplayGeometry(videoWidth: number, videoHeight: number, viewWidth: number, viewHeight: number) {
     if (this.videoSize[0] !== videoWidth || this.videoSize[1] !== videoHeight ||
-        this.displaySize[0] !== viewWidth || this.displaySize[1] !== viewHeight) this.resetVelocity = true;
+        this.displaySize[0] !== viewWidth || this.displaySize[1] !== viewHeight) this.coordinateEpoch += 1;
     this.videoSize = [Math.max(1, videoWidth), Math.max(1, videoHeight)];
     this.displaySize = [Math.max(1, viewWidth), Math.max(1, viewHeight)];
   }
@@ -80,7 +82,7 @@ export class HandTracker {
     this.lastFrames.clear();
     this.rawPalms.clear();
     this.labelVotes.clear();
-    this.resetVelocity = true;
+    this.handCoordinateEpoch.clear();
   }
 
   close() {
@@ -158,7 +160,9 @@ export class HandTracker {
       const normalizedPinchDistance = pinchDistance / palmScale;
       const prev = assignment[index];
       const id = prev?.id ?? this.nextHandId++;
-      const recent = !this.resetVelocity && prev && now - prev.timestamp <= 150 ? prev : undefined;
+      // A missing hand can retain identity across empty/other-hand frames, but
+      // its display-space velocity baseline belongs to its own coordinate epoch.
+      const recent = prev && this.handCoordinateEpoch.get(id) === this.coordinateEpoch && now - prev.timestamp <= 150 ? prev : undefined;
       const dt = recent ? Math.max(8, now - recent.timestamp) / 1000 : 1 / 30;
       const displayAspect = this.displaySize[0] / this.displaySize[1];
       const rawVelocity = recent
@@ -191,6 +195,7 @@ export class HandTracker {
         timestamp: now,
       };
       this.lastFrames.set(id, frame);
+      this.handCoordinateEpoch.set(id, this.coordinateEpoch);
       this.rawPalms.set(id, palms[index]);
       return frame;
     });
@@ -198,10 +203,10 @@ export class HandTracker {
     for (const [id, frame] of this.lastFrames) {
       if (now - frame.timestamp > 350) {
         this.lastFrames.delete(id); this.rawPalms.delete(id); this.labelVotes.delete(id);
+        this.handCoordinateEpoch.delete(id);
       }
     }
     hands.sort((a, b) => a.id - b.id);
-    this.resetVelocity = false;
 
     return { hands, timestamp: now, trackingFps };
   }

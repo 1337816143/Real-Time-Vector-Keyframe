@@ -3,12 +3,142 @@ name: x64 capability probe (non-release)
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      same_runner_diagnostic:
+        description: Compare the pinned baseline and candidate once on one runner (not release acceptance)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   verify:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.same_runner_diagnostic }}
     uses: ./.github/workflows/ci.yml
     with:
       x64_probe: true
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.same_runner_diagnostic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Read diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          path: paired/controller
+          persist-credentials: false
+      - name: Read exact published baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 80c4cac13716caf177d8737a66919a477b1e83e8
+          path: paired/baseline
+          persist-credentials: false
+      - name: Read exact runtime candidate
+        uses: actions/checkout@v4
+        with:
+          ref: b07328628967735c0e7538ef61c2102d4cd85280
+          path: paired/candidate
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install one shared original browser toolchain
+        run: |
+          mkdir -p paired-evidence
+          python3 -m venv "$RUNNER_TEMP/vector-paired-venv"
+          "$RUNNER_TEMP/vector-paired-venv/bin/pip" install --disable-pip-version-check playwright==1.57.0
+          "$RUNNER_TEMP/vector-paired-venv/bin/python" -m playwright install --with-deps chromium
+      - name: Run unchanged formal face tests once per revision on this runner
+        run: |
+          "$RUNNER_TEMP/vector-paired-venv/bin/python" paired/controller/scripts/face_x64_pair_diagnostic.py \
+            --baseline paired/baseline \
+            --candidate paired/candidate \
+            --output paired-evidence
+      - name: Save diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x64-paired-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: paired-evidence/
+          retention-days: 14
+
+  animation_raw_diagnose:
+    # One direct child of the approved QA head, attempt 1 only; never a release gate.
+    if: >-
+      ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+          github.run_attempt == '1' &&
+          github.repository == '1337816143/Real-Time-Vector-Keyframe' &&
+          github.event.pull_request.number == 6 &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.head.ref == 'dot/runtime-lifecycle-20261006' &&
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.pull_request.base.sha == '80c4cac13716caf177d8737a66919a477b1e83e8' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Read this reviewed diagnostic commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: animation/controller
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Bound experiment to one child of the prior QA head
+        id: boundary
+        run: |
+          parents="$(git -C animation/controller show -s --format=%P HEAD)"
+          if [ "$parents" = "6fc931453b71c6bae7923d53825e7645d8de60cf" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'Not the approved one-shot commit boundary; no experiment will run.'
+          fi
+      - name: Read exact approved application source and collector
+        if: steps.boundary.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: da5e2d4637c7f173334d0a0f525e3bc0b3d3a14f
+          path: animation/source
+          persist-credentials: false
+      - name: Verify and copy only the reviewed diagnostic inputs
+        if: steps.boundary.outputs.run == 'true'
+        working-directory: animation/controller
+        run: |
+          printf '%s  %s\n' \
+            '81c73bb25c87df6f7d311b53cb2057e1abefb204fe61af2ef61955538b0f3a6c' 'scripts/face_animation_contention.py' \
+            'b646404443cbca0793abde0fbf71e39e0f867b7fc27f796d8a1e660df82f517c' 'scripts/animation_contention_inputs.json' \
+            '3ba17ee1ad5514c6ec56dd5e44c2016ee4dd98d18eaa574030d23a6766f64e85' 'scripts/face_failure_reporting.py' \
+            | sha256sum --check --strict
+          cp scripts/face_animation_contention.py scripts/animation_contention_inputs.json scripts/face_failure_reporting.py ../source/scripts/
+      - name: Select the already approved Node version
+        if: steps.boundary.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+      - name: Reproduce application bytes without new build metadata
+        if: steps.boundary.outputs.run == 'true'
+        working-directory: animation/source
+        run: |
+          test "$(node --version)" = 'v24.21.0'
+          test "$(npm --version)" = '11.19.0'
+          python3 -c "import platform,sys; sys.exit(0 if platform.python_version() == '3.12.3' else 'Unapproved Python version')"
+          npm ci
+          npm run build
+      - name: Prepare the original pinned browser toolchain
+        if: steps.boundary.outputs.run == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/vector-animation-venv"
+          "$RUNNER_TEMP/vector-animation-venv/bin/pip" install --disable-pip-version-check playwright==1.57.0
+          "$RUNNER_TEMP/vector-animation-venv/bin/python" -m playwright install --with-deps chromium
+      - name: Run one fixed raw default-to-fallback ABBA after approved-byte preflight
+        if: steps.boundary.outputs.run == 'true'
+        working-directory: animation/source
+        run: timeout 600s "$RUNNER_TEMP/vector-animation-venv/bin/python" scripts/face_animation_contention.py
+      - name: Preserve animation diagnostic evidence only
+        if: always() && steps.boundary.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: animation-raw-contention-${{ github.run_id }}-${{ github.run_attempt }}
+          path: animation/source/test-results/animation-contention/
+          retention-days: 14
