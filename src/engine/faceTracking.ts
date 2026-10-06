@@ -74,6 +74,12 @@ export class FaceTracker {
     catch {this.fail('无法读取本地人脸帧，请重试');return;}
     bitmap.then(image=>{
       if(epoch!==this.epoch||!this.enabled||!this.worker||this.pending?.id!==id){image.close();return;}
+      // Resizing may finish after this capture can possibly be rendered. Do not
+      // spend another inference on an already-expired frame or relabel it as new.
+      if(this.now()-now>=FACE_MAX_AGE_MS){
+        image.close();this.clearTimer();this.pending=undefined;this.busy=false;
+        this.status='ready';this.message='读取人脸帧延迟，已跳过过期画面';return;
+      }
       try{this.worker.postMessage({type:'frame',id,timestamp:now,bitmap:image},[image]);}
       catch{image.close();this.fail('无法传递本地人脸帧，请重试');}
     }).catch(()=>{if(epoch===this.epoch)this.fail('无法读取本地人脸帧，请重试');});
