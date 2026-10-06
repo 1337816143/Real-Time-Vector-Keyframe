@@ -84,11 +84,11 @@ jobs:
           path: animation/controller
           fetch-depth: 2
           persist-credentials: false
-      - name: Bound experiment to the first child of the approved source
+      - name: Bound experiment to one child of the prior QA head
         id: boundary
         run: |
           parents="$(git -C animation/controller show -s --format=%P HEAD)"
-          if [ "$parents" = "da5e2d4637c7f173334d0a0f525e3bc0b3d3a14f" ]; then
+          if [ "$parents" = "6fc931453b71c6bae7923d53825e7645d8de60cf" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
             echo 'run=false' >> "$GITHUB_OUTPUT"
@@ -106,7 +106,7 @@ jobs:
         working-directory: animation/controller
         run: |
           printf '%s  %s\n' \
-            'd9b645ae8e1e392e9c0a26ff833fdc5a2dea25579f7801c84ff7d381d0397ec3' 'scripts/face_animation_contention.py' \
+            '81c73bb25c87df6f7d311b53cb2057e1abefb204fe61af2ef61955538b0f3a6c' 'scripts/face_animation_contention.py' \
             'b646404443cbca0793abde0fbf71e39e0f867b7fc27f796d8a1e660df82f517c' 'scripts/animation_contention_inputs.json' \
             '3ba17ee1ad5514c6ec56dd5e44c2016ee4dd98d18eaa574030d23a6766f64e85' 'scripts/face_failure_reporting.py' \
             | sha256sum --check --strict

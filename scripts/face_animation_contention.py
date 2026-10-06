@@ -223,9 +223,23 @@ def verify_inputs(root,manifest):
 
 
 class NetworkLedger:
-    """Every request identity and every response is accountable, including duplicates."""
+    """Capture actual response bytes at completion, before raw Worker teardown.
+
+    Only digests are retained. One body() call runs at a time; reentrant event
+    callbacks enqueue bounded metadata. Finalization never tries a late read.
+    body() itself has no interruptible per-call timeout/stream limit: the outer
+    600-second command bounds execution, not native Playwright buffer memory.
+    """
+    MAX_REQUESTS = 128
+    MAX_RESPONSES = 128
+    MAX_BODY_BYTES = 64 * 1024 * 1024
+    MAX_TOTAL_BYTES = 256 * 1024 * 1024
+    ERROR_CLASSES = {'Error','TimeoutError','TargetClosedError','RuntimeError','ValueError','TypeError'}
     def __init__(self,base,manifest):
         self.base=base;self.expected=manifest['distRequiredSha256'];self.entries={};self.blocked=[]
+        self.response_objects={};self.invalid_reasons=set()
+        self.response_count=0;self.capture_busy=False;self.sealed=False;self.overflow=False;self.late_event=False
+        self.capture_count=0;self.capture_bytes=0;self.capture_seconds=0.0
     def key(self,url):
         if url in REMOTE_URLS: return ('remote',url)
         if url.startswith(self.base+'/'):
@@ -235,43 +249,108 @@ class NetworkLedger:
             if name in self.expected: return ('local',name)
         return None
     def request(self,request):
+        if self.sealed:self.late_event=True;return None
         identity=id(request)
         if identity not in self.entries:
+            if len(self.entries)>=self.MAX_REQUESTS:self.overflow=True;return None
             key=self.key(request.url)
             self.entries[identity]={'request':request,'key':key,'method':request.method,'finished':False,'failed':False,'responses':[]}
             if key is None or request.method!='GET': self.blocked.append({'kind':'nonallowlisted-request'})
         return self.entries[identity]
     def response(self,response):
-        entry=self.request(response.request);entry['responses'].append(response)
-    def finished(self,request): self.request(request)['finished']=True
-    def failed(self,request): self.request(request)['failed']=True
+        entry=self.request(response.request)
+        if entry is None:return
+        identity=id(response)
+        if identity in self.response_objects:
+            self.invalid_reasons.add('duplicate-response-object');return
+        if self.response_count>=self.MAX_RESPONSES:self.overflow=True;return
+        self.response_count+=1;self.response_objects[identity]=response
+        entry['responses'].append({'response':response,'capture':{'status':response.status,'sha256':None,'captureState':'pending','capturePhase':None,'byteLength':None,'captureSeconds':None}})
+        self._drain()
+    def finished(self,request):
+        entry=self.request(request)
+        if entry is not None:entry['finished']=True;self._drain()
+    def failed(self,request):
+        entry=self.request(request)
+        if entry is not None:entry['failed']=True
+    def _drain(self):
+        if self.capture_busy or self.sealed:return
+        self.capture_busy=True
+        try:
+            # New callbacks during body() may append metadata; the next bounded
+            # scan sees it. A response is attempted once, including on failure.
+            for _ in range(self.MAX_RESPONSES):
+                if self.sealed:break
+                pending=next(((entry,item) for entry in self.entries.values() for item in entry['responses']
+                              if entry['finished'] and item['capture']['captureState']=='pending'),None)
+                if pending is None:break
+                entry,item=pending;capture=item['capture'];capture['captureState']='failed';capture['capturePhase']='request-completion'
+                if entry['failed'] or capture['status']!=200 or entry['key'] is None or entry['method']!='GET':
+                    capture['error']='response-incomplete-or-non200';continue
+                if self.capture_bytes>=self.MAX_TOTAL_BYTES:
+                    capture['error']='capture-byte-budget-exhausted';continue
+                if self.sealed:break
+                start=time.monotonic();self.capture_count+=1
+                try:
+                    body=item['response'].body()
+                    if not isinstance(body,bytes):raise TypeError('Unexpected response body type')
+                    size=len(body);capture['byteLength']=size;self.capture_bytes+=size
+                    if size>self.MAX_BODY_BYTES or self.capture_bytes>self.MAX_TOTAL_BYTES:
+                        capture['error']='capture-byte-budget-exceeded'
+                    else:
+                        capture['sha256']=hashlib.sha256(body).hexdigest();capture['captureState']='captured'
+                    del body
+                except Exception as error:
+                    capture['error']='body-hash-unavailable'
+                    kind=type(error).__name__;capture['errorClass']=kind if kind in self.ERROR_CLASSES else 'OtherError'
+                finally:
+                    if self.sealed:self.invalid_reasons.add('capture-returned-after-seal')
+                    elapsed=time.monotonic()-start
+                    if not math.isfinite(elapsed) or elapsed<0:
+                        capture['sha256']=None;capture['captureState']='failed';capture['error']='capture-clock-invalid'
+                    else:
+                        capture['captureSeconds']=elapsed
+                        total=self.capture_seconds+elapsed
+                        if not math.isfinite(total):
+                            capture['sha256']=None;capture['captureState']='failed';capture['error']='capture-clock-invalid'
+                        else:self.capture_seconds=total
+        finally:self.capture_busy=False
+    def seal(self):
+        if self.sealed:return
+        self.sealed=True
+        if self.capture_busy:self.invalid_reasons.add('sealed-with-active-capture')
+        if any(not entry['finished'] or not entry['responses'] or
+               any(item['capture']['captureState']=='pending' for item in entry['responses'])
+               for entry in self.entries.values()):
+            self.invalid_reasons.add('sealed-with-unresolved-capture')
     def finalize(self):
-        records=[];hashes={};locals_seen=set();valid=not self.blocked
-        captured=list(self.entries.values());counts=[len(e['responses']) for e in captured]
-        for index,entry in enumerate(captured):
+        self.seal()
+        records=[];hashes={};locals_seen=set();valid=not(self.blocked or self.overflow or self.late_event or self.capture_busy or self.invalid_reasons)
+        for index,entry in enumerate(self.entries.values()):
             key=entry['key'];record={'requestIndex':index,'key':key,'finished':entry['finished'],'failed':entry['failed'],'responses':[],'valid':True}
             if key is None or entry['method']!='GET' or not entry['finished'] or entry['failed'] or not entry['responses']:
                 record['valid']=False
-            for response in entry['responses']:
-                item={'status':response.status,'sha256':None}
-                if entry['finished'] and not entry['failed'] and response.status==200:
-                    try: item['sha256']=hashlib.sha256(response.body()).hexdigest()
-                    except Exception: item['error']='body-hash-unavailable'
-                else: item['error']='response-incomplete-or-non200'
-                if item['sha256'] is None: record['valid']=False
+            for captured in entry['responses']:
+                item=dict(captured['capture'])
+                if item['captureState']=='pending':item['error']='body-not-captured-at-completion'
+                if item['sha256'] is None or item['captureState']!='captured' or item['status']!=200:record['valid']=False
                 elif key and key[0]=='local':
                     locals_seen.add(key[1])
-                    if item['sha256']!=self.expected[key[1]]: record['valid']=False;item['error']='approved-asset-mismatch'
+                    if item['sha256']!=self.expected[key[1]]:record['valid']=False;item['error']='approved-asset-mismatch'
                 elif key and key[0]=='remote':
                     prior=hashes.get(key[1])
-                    if prior is not None and prior!=item['sha256']: record['valid']=False;item['error']='conflicting-response-bytes'
+                    if prior is not None and prior!=item['sha256']:record['valid']=False;item['error']='conflicting-response-bytes'
                     hashes[key[1]]=item['sha256']
                 record['responses'].append(item)
             valid=valid and record['valid'];records.append(record)
         valid=valid and set(hashes)==set(REMOTE_URLS) and locals_seen==set(self.expected)
-        valid=valid and len(captured)==len(self.entries) and counts==[len(e['responses']) for e in captured]
-        return {'networkValid':bool(valid),'networkRecords':records,'runtimeHashes':hashes,'blockedRequests':self.blocked}
-
+        if not valid:self.invalid_reasons.add('finalized-invalid')
+        return {'networkValid':bool(valid),'networkRecords':records,'runtimeHashes':hashes,'blockedRequests':list(self.blocked),
+                'responseCapture':{'bodyCalls':self.capture_count,'bodyBytesObserved':self.capture_bytes,'bodyCaptureSeconds':self.capture_seconds,
+                                   'recordLimitExceeded':self.overflow,'eventsAfterSeal':self.late_event,'reentrantCapturePending':self.capture_busy,
+                                   'terminalInvalidReasons':sorted(self.invalid_reasons),
+                                   'maxRequests':self.MAX_REQUESTS,'maxResponses':self.MAX_RESPONSES,'maxBodyBytesAfterRead':self.MAX_BODY_BYTES,'maxTotalBytesAfterRead':self.MAX_TOTAL_BYTES,
+                                   'scope':'observer calls overlap startup; not subtracted from raw timings; native body buffers not hard-bounded'}}
 
 def safe_snapshot():
     try:
@@ -325,7 +404,7 @@ def main():
                     context=browser.new_context();ledger=NetworkLedger(base,manifest)
                     def route_request(route):
                         entry=ledger.request(route.request)
-                        if entry['key'] is not None and route.request.method=='GET': route.continue_()
+                        if entry is not None and entry['key'] is not None and route.request.method=='GET': route.continue_()
                         else: route.abort()
                     context.route('**/*',route_request)
                     context.on('request',ledger.request);context.on('response',ledger.response)
@@ -334,20 +413,23 @@ def main():
                     row['hostStart']=page.evaluate(HOST_SETUP,condition)
                     row['rawSequenceExecuted']=True
                     row.update(run_raw_sequence(protocol,reporter,page,base,worker,output/'trials'/label/'face-worker'))
-                    row['hostEnd']=page.evaluate(HOST_END)  # before any response-body hashing
+                    row['hostEnd']=page.evaluate(HOST_END)  # body capture already occurred at completion events
                 except Exception as error:
                     row.setdefault('rawSubsequencePassed',False);row['trialError']=type(error).__name__
                 finally:
-                    if ledger is not None:
-                        try: row.update(ledger.finalize())
-                        except Exception: row['networkValid']=False;row['networkAccountingError']='unavailable'
+                    if ledger is not None:ledger.seal()
                     if browser:
                         try: browser.close()
                         except Exception: row['teardownFailed']=True
+                    if ledger is not None:
+                        try: row.update(ledger.finalize())
+                        except Exception: row['networkValid']=False;row['networkAccountingError']='unavailable'
                     row['after']=safe_snapshot()
                     try: row['inputIdentityAfter']=verify_inputs(root,manifest)
                     except Exception: row['inputIdentityAfter']=None;row['inputIdentityError']='missing-or-changed-approved-input'
                     summary['rows'].append(row);summary['plannedTrials'][index]['status']='executed' if row['rawSequenceExecuted'] else 'not-started-error';save()
+                if row.get('responseCapture',{}).get('reentrantCapturePending'):
+                    summary['planIncompleteReason']='observer-capture-unresolved-after-finalization';break
                 if row.get('teardownFailed') or row.get('inputIdentityBefore')!=expected_identity or row.get('inputIdentityAfter')!=expected_identity: break
         summary['comparisonValid']=identity_consistent(summary['rows'],expected_identity,manifest['runtimeVersions']['chromium'])
         summary['pairedContrasts']=contrasts(summary['rows'],summary['comparisonValid']);summary['stage']='completed'
