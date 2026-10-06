@@ -37,15 +37,25 @@ jobs:
           python3 -m venv .browser-venv
           .browser-venv/bin/pip install --disable-pip-version-check playwright==1.57.0
           .browser-venv/bin/python -m playwright install --with-deps chromium
+      - name: Observe runner before browser tests (diagnostic only)
+        continue-on-error: true
+        run: python3 scripts/runner_snapshot.py before-browser-tests
       - name: Production startup, Chinese UI and mirror regressions (synthetic media)
         run: timeout 180s .browser-venv/bin/python tests/browser_smoke.py --require-gpu
       - name: Real WebGL quad pixels (synthetic media, no real camera or model)
         run: timeout 120s .browser-venv/bin/python tests/quad_gpu.py
       - name: Face preset opt-in, retry, advanced mode and exit (synthetic Worker)
         run: timeout 120s .browser-venv/bin/python tests/face_ui.py
+      - name: Observe runner before formal face gate (diagnostic only)
+        continue-on-error: true
+        run: python3 scripts/runner_snapshot.py before-face-worker
       - name: Actual FaceTracker with blank frames and pinned official portrait fixture
         id: face_worker
         run: timeout 120s .browser-venv/bin/python tests/face_worker.py
+      - name: Observe runner after formal face gate (diagnostic only)
+        if: always()
+        continue-on-error: true
+        run: python3 scripts/runner_snapshot.py after-face-worker
       - name: Diagnose raw SDK timing after a failed face gate (never a release pass)
         if: failure() && steps.face_worker.outcome == 'failure'
         continue-on-error: true
