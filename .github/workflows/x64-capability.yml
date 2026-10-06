@@ -19,13 +19,23 @@ jobs:
     with:
       x64_probe: true
   diagnose:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.same_runner_diagnostic }}
+    # The PR-only route is restricted to this existing QA branch and pinned baseline.
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.same_runner_diagnostic) ||
+          (github.event_name == 'pull_request' && github.event.action == 'synchronize' &&
+           github.repository == '1337816143/Real-Time-Vector-Keyframe' &&
+           github.event.pull_request.number == 6 &&
+           github.event.pull_request.head.repo.full_name == github.repository &&
+           github.event.pull_request.head.ref == 'dot/runtime-lifecycle-20261006' &&
+           github.event.pull_request.base.ref == 'main' &&
+           github.event.pull_request.base.sha == '80c4cac13716caf177d8737a66919a477b1e83e8') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Read diagnostic driver
         uses: actions/checkout@v4
         with:
+          ref: ed5db59a35bf9f2d9424baac45f1c90dbe84be31
           path: paired/controller
           persist-credentials: false
       - name: Read exact published baseline
