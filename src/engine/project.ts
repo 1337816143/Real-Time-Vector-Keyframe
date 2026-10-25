@@ -459,24 +459,14 @@ export function parseProject(text: string): ProjectSnapshot {
   const customCurve = sanitizeCurve(mask.customCurve);
   const customFeather = clamp(finite(mask.customFeather, 0.006), 0, 0.08);
   const customExpansion = clamp(finite(mask.customExpansion, 0), -0.45, 0.45);
-  setBezierMaskState({
-    curve: customCurve,
-    enabled: maskType === 'custom',
-    feather: customFeather,
-    expansion: customExpansion,
-  });
 
   const scene = sanitizeScene(root.scene);
-  if (scene) replaceScene(scene.graph, scene.enabled);
-  else replaceScene(createDefaultScene(), false);
 
   const sceneMotion = sanitizeSceneMotion(root.sceneMotion);
-  sceneMotionRecorder.loadTrack(sceneMotion);
 
   const effectSequence = sanitizeEffectSequence(root.effectSequence, sceneMotion, scene);
-  replaceEffectSequence(effectSequence);
 
-  return {
+  const project: ProjectSnapshot = {
     version: 1,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : new Date().toISOString(),
     preset,
@@ -500,4 +490,18 @@ export function parseProject(text: string): ProjectSnapshot {
     sceneMotion,
     effectSequence,
   };
+
+  // Commit only after every field has been parsed successfully. A rejected
+  // file must not replace global state or discard an active scene recording.
+  setBezierMaskState({
+    curve: customCurve,
+    enabled: maskType === 'custom',
+    feather: customFeather,
+    expansion: customExpansion,
+  });
+  if (scene) replaceScene(scene.graph, scene.enabled);
+  else replaceScene(createDefaultScene(), false);
+  sceneMotionRecorder.loadTrack(sceneMotion);
+  replaceEffectSequence(effectSequence);
+  return project;
 }
